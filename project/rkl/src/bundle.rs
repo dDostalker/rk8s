@@ -38,12 +38,13 @@ use tokio::fs;
 /// └── rootfs
 /// ```
 #[allow(dead_code)]
-pub async fn convert_image_to_bundle<P: AsRef<Path>>(
+pub async fn convert_image_to_bundle<P: AsRef<Path>, B: AsRef<Path>>(
     image_path: P,
-    bundle_path: P,
+    bundle_path: B,
 ) -> anyhow::Result<()> {
     // Create the bundle directory
     fs::create_dir_all(&bundle_path).await?;
+    println!("{:?}", image_path.as_ref());
 
     // Extract layers from the OCI image
     let layers = extract_layers(image_path, &bundle_path).await?;
@@ -57,9 +58,9 @@ pub async fn convert_image_to_bundle<P: AsRef<Path>>(
 }
 
 #[allow(dead_code)]
-async fn extract_layers<P: AsRef<Path>>(
+async fn extract_layers<P: AsRef<Path>, B: AsRef<Path>>(
     image_path: P,
-    bundle_path: &P,
+    bundle_path: &B,
 ) -> anyhow::Result<Vec<PathBuf>> {
     let index_json = image_path.as_ref().join("index.json");
     let image_index =

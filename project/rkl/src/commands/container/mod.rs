@@ -4,6 +4,7 @@ use crate::{
         compose::network::{BRIDGE_CONF, CliNetworkConfig, STD_CONF_PATH},
         container::config::ContainerConfigBuilder,
         create, delete, exec, list, load_container, start,
+        utils::{ImageType, determine_image_path, handle_oci_image},
     },
     cri::cri_api::{ContainerConfig, CreateContainerResponse, Mount},
     rootpath,
@@ -104,9 +105,18 @@ impl ContainerRunner {
         let mut file = File::open(spec_path)
             .map_err(|e| anyhow!("open the container spec file failed: {e}"))?;
         let mut content = String::new();
+
         file.read_to_string(&mut content)?;
 
-        let container_spec: ContainerSpec = serde_yaml::from_str(&content)?;
+        let mut container_spec: ContainerSpec = serde_yaml::from_str(&content)?;
+
+        // TODO: MVP
+        // check if the image path
+        if let ImageType::OCIImage = determine_image_path(&container_spec.image)? {
+            handle_oci_image(&container_spec.image, container_spec.name.clone())?;
+            container_spec.image = format!("/var/rkl/bundle/{}", container_spec.name);
+        }
+
         let container_id = container_spec.name.clone();
         let root_path = rootpath::determine(None)?;
         Ok(ContainerRunner {
