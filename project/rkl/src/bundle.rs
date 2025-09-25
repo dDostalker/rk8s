@@ -6,13 +6,15 @@ use std::{
 };
 
 use anyhow::Context;
+use anyhow::anyhow;
 use flate2::read::GzDecoder;
 use futures::future;
-use nix::mount::{self, MsFlags};
+use libfuse_fs::overlayfs::mount_fs;
 use oci_spec::image::{ImageConfiguration, ImageIndex, ImageManifest};
 use sha256::try_digest;
 use tar::Archive;
 use tokio::fs;
+use tracing::debug;
 
 /// Converts an OCI image directory to a bundle directory.
 ///
@@ -43,7 +45,18 @@ pub async fn convert_image_to_bundle<P: AsRef<Path>, B: AsRef<Path>>(
     bundle_path: B,
 ) -> anyhow::Result<()> {
     // Create the bundle directory
+
+    let bundle_path = bundle_path.as_ref();
+    if bundle_path.exists() {
+        debug!("{} directory exists deleting...", bundle_path.display());
+        println!("{} directory exists deleting...", bundle_path.display());
+        fs::remove_dir_all(&bundle_path)
+            .await
+            .with_context(|| format!("failed to delete the dir {bundle_path:?}"))?;
+    }
+
     fs::create_dir_all(&bundle_path).await?;
+    println!("{:?}", image_path.as_ref());
     println!("{:?}", image_path.as_ref());
 
     // Extract layers from the OCI image
@@ -57,7 +70,6 @@ pub async fn convert_image_to_bundle<P: AsRef<Path>, B: AsRef<Path>>(
     Ok(())
 }
 
-#[allow(dead_code)]
 async fn extract_layers<P: AsRef<Path>, B: AsRef<Path>>(
     image_path: P,
     bundle_path: &B,
@@ -188,25 +200,19 @@ async fn extract_tar_gz<P: AsRef<Path>>(tar_gz_path: P, extract_dir: P) -> anyho
     .with_context(|| "Failed to spawn blocking task for tar extraction")?
 }
 
-#[allow(dead_code)]
+#[allow(unused)]
 async fn mount_and_copy_bundle<P: AsRef<Path>>(
     bundle_path: P,
     layers: &Vec<PathBuf>,
 ) -> anyhow::Result<()> {
+    // mount_point -> /var/lib/rkl/<container-id>
+    // low_dir -> image_path
+    // upper_dir ->   /var/lib/rkl/<container_id>/upper
+    // work_dir ->   /var/lib/rkl/<container_id>/work
+
     let bundle_path = bundle_path.as_ref();
     let upper_dir = bundle_path.join("upper");
     let merged_dir = bundle_path.join("merged");
-    let work_dir = bundle_path.join("work");
-
-    fs::create_dir_all(&upper_dir)
-        .await
-        .with_context(|| format!("Failed to create upper directory: {upper_dir:?}"))?;
-    fs::create_dir_all(&merged_dir)
-        .await
-        .with_context(|| format!("Failed to create merged directory: {merged_dir:?}"))?;
-    fs::create_dir_all(&work_dir)
-        .await
-        .with_context(|| format!("Failed to create work directory: {work_dir:?}"))?;
 
     let lower_dirs = layers
         .iter()
@@ -216,105 +222,106 @@ async fn mount_and_copy_bundle<P: AsRef<Path>>(
                 .with_context(|| format!("Failed to get canonical path for: {dir:?}"))
                 .map(|p| p.display().to_string())
         })
-        .collect::<Result<Vec<String>, _>>()?
-        .join(":");
+        .collect::<Result<Vec<String>, _>>()?;
 
-    let upper_canon = Path::new(&upper_dir)
-        .canonicalize()
-        .with_context(|| format!("Failed to get canonical path for upper dir: {upper_dir:?}"))?;
-    let work_canon = Path::new(&work_dir)
-        .canonicalize()
-        .with_context(|| format!("Failed to get canonical path for work dir: {work_dir:?}"))?;
+    if merged_dir.exists() {
+        debug!("{} directory exists deleting...", merged_dir.display());
+        println!("{} directory exists deleting...", merged_dir.display());
+        fs::remove_dir_all(&merged_dir)
+            .await
+            .with_context(|| format!("failed to delete the dir {merged_dir:?}"));
+    }
 
-    let options = format!(
-        "lowerdir={},upperdir={},workdir={}",
-        lower_dirs,
-        upper_canon.display(),
-        work_canon.display()
-    );
+    if upper_dir.exists() {
+        debug!("{} directory exists deleting...", upper_dir.display());
+        println!("{} directory exists deleting...", upper_dir.display());
+        fs::remove_dir_all(&upper_dir)
+            .await
+            .with_context(|| format!("failed to delete the dir {upper_dir:?}"));
+    }
 
-    mount::mount::<str, Path, str, str>(
-        Some("overlay"),
-        Path::new(&merged_dir),
-        Some("overlay"),
-        MsFlags::empty(),
-        Some(options.as_str()),
-    )
-    .with_context(|| format!("Failed to mount overlay filesystem at: {merged_dir:?}"))?;
+    fs::create_dir_all(&merged_dir)
+        .await
+        .map_err(|e| anyhow!("Failed to create rootfs directory: {merged_dir:?}: {e}"))?;
+
+    fs::create_dir_all(&upper_dir)
+        .await
+        .with_context(|| format!("Failed to create rootfs directory: {upper_dir:?}"))?;
+
+    debug!("merge_dir: {merged_dir:?}");
+    debug!("upper_dir: {upper_dir:?}");
+    debug!("start to invoke mount_fs......");
 
     let rootfs = bundle_path.join("rootfs");
     fs::create_dir_all(&rootfs)
         .await
         .with_context(|| format!("Failed to create rootfs directory: {rootfs:?}"))?;
 
-    let unmount_result = std::panic::catch_unwind(|| {
-        let status = Command::new("sh")
-            .arg("-c")
-            .arg(format!(
-                "cp -a {}/* {}",
-                merged_dir.display(),
-                rootfs.display()
-            ))
-            .status()
-            .with_context(|| "Failed to execute cp command")?;
+    // mount with libfuse
+    let mut mnt_handle = mount_fs(
+        merged_dir.to_str().unwrap().into(),
+        upper_dir.to_str().unwrap().into(),
+        lower_dirs,
+        true,
+    )
+    .await;
 
-        if !status.success() {
-            return Err(anyhow::anyhow!(
-                "cp command failed with exit code: {:?}",
-                status.code()
-            ));
-        }
+    println!("invoke libfuse_fs mount ended");
 
-        Ok(())
-    });
+    let status = Command::new("sh")
+        .arg("-c")
+        .arg(format!(
+            "cp -a {}/* {}",
+            merged_dir.display(),
+            rootfs.display()
+        ))
+        .status()
+        .with_context(|| "Failed to execute cp command")?;
 
-    mount::umount(&merged_dir)
-        .with_context(|| format!("Failed to unmount overlay at: {merged_dir:?}"))?;
-
-    if let Err(e) = unmount_result {
+    if !status.success() {
         return Err(anyhow::anyhow!(
-            "Operation failed (but overlay was unmounted): {:?}",
-            e
+            "cp command failed with exit code: {:?}",
+            status.code()
         ));
     }
 
-    fs::remove_dir_all(&upper_dir)
-        .await
-        .with_context(|| format!("Failed to remove upper directory: {upper_dir:?}"))?;
-    fs::remove_dir_all(&merged_dir)
-        .await
-        .with_context(|| format!("Failed to remove merged directory: {merged_dir:?}"))?;
-    fs::remove_dir_all(&work_dir)
-        .await
-        .with_context(|| format!("Failed to remove work directory: {work_dir:?}"))?;
+    mnt_handle.unmount().await?;
 
-    for layer in layers {
-        fs::remove_dir_all(layer)
-            .await
-            .with_context(|| format!("Failed to remove layer directory: {layer:?}"))?;
-    }
+    // // clean
+    // fs::remove_dir_all(&upper_dir)
+    //     .await
+    //     .with_context(|| format!("Failed to remove upper directory: {upper_dir:?}"))?;
+    // fs::remove_dir_all(&merged_dir)
+    //     .await
+    //     .with_context(|| format!("Failed to remove merged directory: {merged_dir:?}"))?;
 
-    let mut entries = fs::read_dir(bundle_path)
-        .await
-        .with_context(|| format!("Failed to read directory: {bundle_path:?}"))?;
+    // for layer in layers {
+    //     fs::remove_dir_all(layer)
+    //         .await
+    //         .with_context(|| format!("Failed to remove layer directory: {layer:?}"))?;
+    // }
 
-    while let Some(entry) = entries
-        .next_entry()
-        .await
-        .with_context(|| format!("Failed to read next directory entry in: {bundle_path:?}"))?
-    {
-        let path = entry.path();
-        let metadata = fs::metadata(&path)
-            .await
-            .with_context(|| format!("Failed to get metadata for: {path:?}"))?;
+    // let mut entries = fs::read_dir(bundle_path)
+    //     .await
+    //     .with_context(|| format!("Failed to read directory: {bundle_path:?}"))?;
 
-        if metadata.is_file() && path.extension().is_some_and(|ext| ext == "tar") {
-            println!("Removing: {path:?}");
-            fs::remove_file(&path)
-                .await
-                .with_context(|| format!("Failed to remove tar file: {path:?}"))?;
-        }
-    }
+    // while let Some(entry) = entries
+    //     .next_entry()
+    //     .await
+    //     .with_context(|| format!("Failed to read next directory entry in: {bundle_path:?}"))?
+    // {
+    //     let path = entry.path();
+    //     let metadata = fs::metadata(&path)
+    //         .await
+    //         .with_context(|| format!("Failed to get metadata for: {path:?}"))?;
+
+    //     if metadata.is_file() && path.extension().is_some_and(|ext| ext == "tar") {
+    //         println!("Removing: {path:?}");
+    //         fs::remove_file(&path)
+    //             .await
+    //             .with_context(|| format!("Failed to remove tar file: {path:?}"))?;
+    //     }
+    // }
 
     Ok(())
 }

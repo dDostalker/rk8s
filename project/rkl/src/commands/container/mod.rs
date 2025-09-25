@@ -114,7 +114,7 @@ impl ContainerRunner {
         // check if the image path
         if let ImageType::OCIImage = determine_image_path(&container_spec.image)? {
             handle_oci_image(&container_spec.image, container_spec.name.clone())?;
-            container_spec.image = format!("/var/rkl/bundle/{}", container_spec.name);
+            container_spec.image = format!("/var/lib/rkl/{}", container_spec.name);
         }
 
         let container_id = container_spec.name.clone();
@@ -281,17 +281,19 @@ impl ContainerRunner {
 
         let config_path = format!("{bundle_path}/config.json");
         if Path::new(&config_path).exists() {
-            std::fs::remove_file(&config_path).map_err(|e| {
-                anyhow!(
-                    "Failed to remove existing config.json in bundle path: {}",
-                    e
-                )
-            })?;
+            // std::fs::remove_file(&config_path).map_err(|e| {
+            //     anyhow!(
+            //         "Failed to remove existing config.json in bundle path: {}",
+            //         e
+            //     )
+            // })?;
+            let cur_config: Spec = serde_json::from_reader(File::open(config_path)?)?;
+            println!("{:?}", cur_config);
         }
-        let file = File::create(config_path)?;
-        let mut writer = BufWriter::new(file);
-        serde_json::to_writer_pretty(&mut writer, &spec)?;
-        writer.flush()?;
+        // let file = File::create(config_path)?;
+        // let mut writer = BufWriter::new(file);
+        // serde_json::to_writer_pretty(&mut writer, &spec)?;
+        // writer.flush()?;
 
         let create_args = Create {
             bundle: bundle_path.clone().into(),

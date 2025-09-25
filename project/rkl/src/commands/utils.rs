@@ -21,7 +21,7 @@ pub fn handle_oci_image<P: AsRef<Path>>(image: P, name: String) -> Result<()> {
         .unwrap()
         .block_on(bundle::convert_image_to_bundle(
             image,
-            format!("/var/rkl/bundle/{name}"),
+            format!("/var/lib/rkl/{name}"),
         ))
 }
 
@@ -32,7 +32,7 @@ pub fn determine_image_path<P: AsRef<Path>>(target: P) -> Result<ImageType> {
 
     let path = fs::canonicalize(target.as_ref())?;
 
-    // determine if if is bundle
+    // check if if is bundle
     if path.join("config.json").exists() && path.join("rootfs").is_dir() {
         return Ok(ImageType::Bundle);
     }
