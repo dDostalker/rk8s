@@ -43,7 +43,7 @@ use tracing::debug;
 pub async fn convert_image_to_bundle<P: AsRef<Path>, B: AsRef<Path>>(
     image_path: P,
     bundle_path: B,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<ImageConfiguration> {
     // Create the bundle directory
 
     let bundle_path = bundle_path.as_ref();
@@ -60,20 +60,20 @@ pub async fn convert_image_to_bundle<P: AsRef<Path>, B: AsRef<Path>>(
     println!("{:?}", image_path.as_ref());
 
     // Extract layers from the OCI image
-    let layers = extract_layers(image_path, &bundle_path).await?;
+    let (layers, image_config) = extract_layers(image_path, &bundle_path).await?;
 
     println!("layers: {layers:?}");
 
     // Mount the layers and copy to the bundle
     mount_and_copy_bundle(bundle_path, &layers).await?;
 
-    Ok(())
+    Ok(image_config)
 }
 
 async fn extract_layers<P: AsRef<Path>, B: AsRef<Path>>(
     image_path: P,
     bundle_path: &B,
-) -> anyhow::Result<Vec<PathBuf>> {
+) -> anyhow::Result<(Vec<PathBuf>, ImageConfiguration)> {
     let index_json = image_path.as_ref().join("index.json");
     let image_index =
         ImageIndex::from_file(index_json).with_context(|| "Failed to read index.json")?;
@@ -101,9 +101,10 @@ async fn extract_layers<P: AsRef<Path>, B: AsRef<Path>>(
     println!("image_config_hash: {image_config_hash}");
 
     let image_config_path = image_path.join(image_config_hash);
-    let image_config = ImageConfiguration::from_file(image_config_path)
+    let image_config = ImageConfiguration::from_file(&image_config_path)
         .with_context(|| "Failed to read config.json")?;
     let diff_ids = image_config.rootfs().diff_ids();
+    println!("Image Config: {:?}", image_config);
 
     let layer_descriptors = image_manifest.layers();
     assert_eq!(diff_ids.len(), layer_descriptors.len());
@@ -140,7 +141,7 @@ async fn extract_layers<P: AsRef<Path>, B: AsRef<Path>>(
         }
     }
 
-    Ok(layers)
+    Ok((layers, image_config))
 }
 
 async fn decompress_gzip_to_tar<P: AsRef<Path>>(

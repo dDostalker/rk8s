@@ -22,10 +22,15 @@ use liboci_cli::{Create, Delete, List, Start};
 use nix::unistd::Pid;
 use oci_spec::runtime::{LinuxBuilder, ProcessBuilder, Spec, get_default_namespaces};
 use oci_spec::runtime::{Mount as OciMount, MountBuilder};
-use std::{env, fmt::Write as _, io};
+use std::fmt::Write as fmtWrite;
+use std::{
+    env,
+    io::{self, BufWriter},
+};
 use std::{
     fs::{self, File},
-    io::{BufWriter, Read, Write},
+    io::Read,
+    io::Write,
     path::{Path, PathBuf},
 };
 use tabwriter::TabWriter;
@@ -85,8 +90,13 @@ pub struct ContainerRunner {
 }
 
 impl ContainerRunner {
-    pub fn from_spec(spec: ContainerSpec, root_path: Option<PathBuf>) -> Result<Self> {
+    pub fn from_spec(mut spec: ContainerSpec, root_path: Option<PathBuf>) -> Result<Self> {
         let container_id = spec.name.clone();
+
+        let builder = handle_image_typ(&spec)?;
+        if builder.is_some() {
+            spec.image = format!("/var/lib/rkl/{}", spec.name);
+        }
 
         Ok(ContainerRunner {
             spec,
@@ -110,10 +120,8 @@ impl ContainerRunner {
 
         let mut container_spec: ContainerSpec = serde_yaml::from_str(&content)?;
 
-        // TODO: MVP
-        // check if the image path
-        if let ImageType::OCIImage = determine_image_path(&container_spec.image)? {
-            handle_oci_image(&container_spec.image, container_spec.name.clone())?;
+        let builder = handle_image_typ(&container_spec)?;
+        if builder.is_some() {
             container_spec.image = format!("/var/lib/rkl/{}", container_spec.name);
         }
 
@@ -121,7 +129,7 @@ impl ContainerRunner {
         let root_path = rootpath::determine(None)?;
         Ok(ContainerRunner {
             spec: container_spec,
-            config_builder: ContainerConfigBuilder::default(),
+            config_builder: builder.unwrap_or_default(),
             root_path,
             config: None,
             container_id,
@@ -228,6 +236,7 @@ impl ContainerRunner {
         // spec.set_root(Some(root));
 
         // use the default namespace configuration
+
         let namespaces = get_default_namespaces();
 
         let mut linux: LinuxBuilder = LinuxBuilder::default().namespaces(namespaces);
@@ -240,15 +249,14 @@ impl ContainerRunner {
         spec.set_linux(Some(linux));
 
         // build the process path
-        let mut process = ProcessBuilder::default()
-            .args(self.spec.args.clone())
-            .build()?;
-
+        let mut process = ProcessBuilder::default().cwd(&config.working_dir).build()?;
         let mut capabilities = process.capabilities().clone().unwrap();
         // add the CAP_NET_RAW
         add_cap_net_raw(&mut capabilities);
 
         process.set_capabilities(Some(capabilities));
+        process.set_args(Some(config.args.clone()));
+        // process.set_env(Some(config.envs));
 
         spec.set_process(Some(process));
 
@@ -265,7 +273,7 @@ impl ContainerRunner {
         // determine if it's in the single mode
 
         //  create oci spec
-        let spec = self.create_oci_spec()?;
+        let spec: Spec = self.create_oci_spec()?;
 
         // create a config.path at the bundle path
         // TODO: Here use the local file path directly
@@ -281,19 +289,19 @@ impl ContainerRunner {
 
         let config_path = format!("{bundle_path}/config.json");
         if Path::new(&config_path).exists() {
-            // std::fs::remove_file(&config_path).map_err(|e| {
-            //     anyhow!(
-            //         "Failed to remove existing config.json in bundle path: {}",
-            //         e
-            //     )
-            // })?;
-            let cur_config: Spec = serde_json::from_reader(File::open(config_path)?)?;
+            std::fs::remove_file(&config_path).map_err(|e| {
+                anyhow!(
+                    "Failed to remove existing config.json in bundle path: {}",
+                    e
+                )
+            })?;
+            let cur_config: Spec = serde_json::from_reader(File::open(&config_path)?)?;
             println!("{:?}", cur_config);
         }
-        // let file = File::create(config_path)?;
-        // let mut writer = BufWriter::new(file);
-        // serde_json::to_writer_pretty(&mut writer, &spec)?;
-        // writer.flush()?;
+        let file = File::create(config_path)?;
+        let mut writer = BufWriter::new(file);
+        serde_json::to_writer_pretty(&mut writer, &spec)?;
+        writer.flush()?;
 
         let create_args = Create {
             bundle: bundle_path.clone().into(),
@@ -601,10 +609,31 @@ pub fn setup_network_conf() -> Result<()> {
         fs::create_dir_all(parent)?;
     }
 
-    // write it to
     fs::write(conf_path, serde_json::to_string_pretty(&conf_value)?)?;
 
     Ok(())
+}
+
+pub fn handle_image_typ(container_spec: &ContainerSpec) -> Result<Option<ContainerConfigBuilder>> {
+    // TODO: MVP
+    // check if the image path
+    if let ImageType::OCIImage = determine_image_path(&container_spec.image)? {
+        let image_config = handle_oci_image(&container_spec.image, container_spec.name.clone())?;
+        // container_spec.image = format!("/var/lib/rkl/{}", container_spec.name);
+        // handle image_config
+        let mut builder = ContainerConfigBuilder::default();
+        if let Some(config) = image_config.config() {
+            // add cmd to config
+            builder.args_from_image_config(config.entrypoint(), config.cmd());
+            // extend env
+            builder.envs_from_image_config(config.env());
+            // set work_dir
+            builder.work_dir(config.working_dir());
+            // builder.users(config.user());
+        }
+        return Ok(Some(builder));
+    }
+    Ok(None)
 }
 
 pub fn container_execute(cmd: ContainerCommand) -> Result<()> {

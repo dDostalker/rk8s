@@ -1,6 +1,7 @@
 use std::{fs, path::Path};
 
 use anyhow::{Result, bail};
+use oci_spec::image::ImageConfiguration;
 use thiserror::Error;
 
 use crate::bundle;
@@ -16,7 +17,7 @@ pub enum UtilsError {
     InvalidImagePath,
 }
 
-pub fn handle_oci_image<P: AsRef<Path>>(image: P, name: String) -> Result<()> {
+pub fn handle_oci_image<P: AsRef<Path>>(image: P, name: String) -> Result<ImageConfiguration> {
     tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(bundle::convert_image_to_bundle(
