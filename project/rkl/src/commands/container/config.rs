@@ -11,6 +11,7 @@ use crate::{
 };
 use common::ContainerSpec;
 
+#[allow(unused)]
 #[derive(Error, Debug)]
 pub enum ConfigParseError {
     #[error("invalid env vectors from image config")]
@@ -141,6 +142,21 @@ impl ContainerConfigBuilder {
 
     pub fn mounts(&mut self, mounts: Vec<Mount>) -> &mut Self {
         self.mounts.extend(mounts);
+        self
+    }
+
+    pub fn metadata(&mut self, metadata: ContainerMetadata) -> &mut Self {
+        self.metadata = Some(metadata);
+        self
+    }
+
+    pub fn images(&mut self, image: String) -> &mut Self {
+        self.image = Some(ImageSpec {
+            image,
+            annotations: HashMap::new(),
+            user_specified_image: String::new(),
+            runtime_handler: String::new(),
+        });
         self
     }
 

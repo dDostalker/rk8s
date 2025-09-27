@@ -47,15 +47,14 @@ pub async fn convert_image_to_bundle<P: AsRef<Path>, B: AsRef<Path>>(
     // Create the bundle directory
 
     let bundle_path = bundle_path.as_ref();
-    if bundle_path.exists() {
-        debug!("{} directory exists deleting...", bundle_path.display());
-        fs::remove_dir_all(&bundle_path)
-            .await
-            .with_context(|| format!("failed to delete the dir {bundle_path:?}"))?;
-    }
+    // if bundle_path.exists() {
+    //     debug!("{} directory exists deleting...", bundle_path.display());
+    //     fs::remove_dir_all(&bundle_path)
+    //         .await
+    //         .with_context(|| format!("failed to delete the dir {bundle_path:?}"))?;
+    // }
 
     fs::create_dir_all(&bundle_path).await?;
-    debug!("{:?}", image_path.as_ref());
     debug!("{:?}", image_path.as_ref());
 
     // Extract layers from the OCI image
@@ -225,7 +224,6 @@ async fn mount_and_copy_bundle<P: AsRef<Path>>(
         .collect::<Result<Vec<String>, _>>()?;
 
     if merged_dir.exists() {
-        debug!("{} directory exists deleting...", merged_dir.display());
         debug!("{} directory exists deleting...", merged_dir.display());
         fs::remove_dir_all(&merged_dir)
             .await
