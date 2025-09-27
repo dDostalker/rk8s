@@ -4,6 +4,7 @@
 
 use clap::Parser;
 use libfuse_fs::passthrough::{new_passthroughfs_layer, newlogfs::LoggingFileSystem};
+use log::debug;
 use rfuse3::{MountOptions, raw::Session};
 use std::ffi::OsString;
 use tokio::signal;
