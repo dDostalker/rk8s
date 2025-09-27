@@ -14,12 +14,14 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     network::{
         backend::{Backend, hostgw::HostgwBackend},
-        config::Config,
-        ip::{self, PublicIPOpts},
         manager::LocalManager,
         registry::XlineSubnetRegistry,
     },
     protocol::config::XlineConfig,
+};
+use libnetwork::{
+    config::NetworkConfig,
+    ip::{self, PublicIPOpts},
 };
 
 //const DEFAULT_SUBNET_FILE: &str = "/run/flannel/subnet.env";
@@ -44,10 +46,7 @@ pub async fn init_network(cfg: &mut XlineConfig, cancel_token: CancellationToken
     let renew_margin = cfg.subnet_lease_renew_margin.unwrap();
     if !(MIN_RENEW_MARGIN..=MAX_RENEW_MARGIN).contains(&renew_margin) {
         bail!(
-            "Invalid subnet-lease-renew-margin ({}), must be between {} and {} minutes",
-            renew_margin,
-            MIN_RENEW_MARGIN,
-            MAX_RENEW_MARGIN
+            "Invalid subnet-lease-renew-margin ({renew_margin}), must be between {MIN_RENEW_MARGIN} and {MAX_RENEW_MARGIN} minutes"
         );
     }
 
@@ -201,7 +200,7 @@ pub async fn get_config(
     mut rx: mpsc::Receiver<()>,
     token: CancellationToken,
     sm: &LocalManager,
-) -> Result<Config> {
+) -> Result<NetworkConfig> {
     loop {
         match sm.get_network_config().await {
             Ok(config) => {

@@ -1,4 +1,5 @@
 // Copyright (c) 2024 https://github.com/divinerapier/cni-rs
+#![allow(dead_code)]
 use crate::rust_cni::result::ResultCNI;
 
 pub trait PluginInfo {
@@ -6,6 +7,7 @@ pub trait PluginInfo {
     fn encode<W: std::io::Write>(&self, w: W) -> ResultCNI<()>;
 }
 
+#[allow(dead_code)]
 #[derive(serde::Serialize, serde::Deserialize)]
 struct PluginInfoT {
     #[serde(rename = "cniVersion")]

@@ -22,11 +22,13 @@ use tokio::{
 use tonic::Code;
 
 use crate::network::{
-    config::{self, Config},
-    ip::{next_ipv4_network, next_ipv6_network},
     lease::LeaseWatchResult,
     registry::{Registry, XlineRegistryError},
-    subnet,
+};
+use libnetwork::{
+    config::{self, NetworkConfig},
+    ip::{next_ipv4_network, next_ipv6_network},
+    subnet::write_subnet_file,
 };
 
 const RACE_RETRIES: usize = 10;
@@ -56,10 +58,10 @@ impl LocalManager {
         }
     }
 
-    pub async fn get_network_config(&self) -> Result<Config> {
+    pub async fn get_network_config(&self) -> Result<NetworkConfig> {
         let raw = self.registry.get_network_config().await?;
-        let mut config = config::parse_config(&raw)?;
-        config::check_network_config(&mut config)?;
+        let mut config = config::parse_network_config(&raw)?;
+        config::validate_network_config(&mut config)?;
         Ok(config)
     }
 
@@ -82,7 +84,7 @@ impl LocalManager {
 
     pub async fn try_acquire_lease(
         &self,
-        config: &Config,
+        config: &NetworkConfig,
         ext_ip: Ipv4Addr,
         attrs: &LeaseAttrs,
     ) -> Result<Lease> {
@@ -169,7 +171,7 @@ impl LocalManager {
 
     pub async fn allocate_subnet(
         &self,
-        config: &Config,
+        config: &NetworkConfig,
         leases: &[Lease],
     ) -> Result<(Ipv4Network, Option<Ipv6Network>)> {
         info!(
@@ -194,7 +196,7 @@ impl LocalManager {
         let prefix_len = config.subnet_len;
 
         let mut current = Ipv4Network::new(start_ip, prefix_len)
-            .map_err(|e| anyhow!("Invalid subnet start: {}", e))?;
+            .map_err(|e| anyhow!("Invalid subnet start: {e}"))?;
 
         while current.ip() <= end_ip && available_v4.len() < 100 {
             if !leases.iter().any(|l| l.subnet == current) {
@@ -207,7 +209,7 @@ impl LocalManager {
             && let (Some(min_v6), Some(max_v6)) = (config.ipv6_subnet_min, config.ipv6_subnet_max)
         {
             let mut sn6 = Ipv6Network::new(min_v6, config.ipv6_subnet_len)
-                .map_err(|e| anyhow!("Invalid IPv6 subnet start: {}", e))?;
+                .map_err(|e| anyhow!("Invalid IPv6 subnet start: {e}"))?;
 
             while sn6.ip() <= max_v6 && available_v6.len() < 100 {
                 if !leases.iter().any(|l| l.ipv6_subnet == Some(sn6)) {
@@ -396,13 +398,13 @@ impl LocalManager {
     pub fn handle_subnet_file(
         &self,
         path: &str,
-        config: &Config,
+        config: &NetworkConfig,
         ip_masq: bool,
         sn: Ipv4Network,
         ipv6sn: Option<Ipv6Network>,
         mtu: u32,
     ) -> anyhow::Result<()> {
-        subnet::write_subnet_file(path, config, ip_masq, Some(sn), ipv6sn, mtu)
+        write_subnet_file(path, config, ip_masq, Some(sn), ipv6sn, mtu)
     }
 }
 
@@ -455,7 +457,7 @@ pub fn find_lease_by_subnet(leases: &[Lease], subnet: Ipv4Network) -> Option<Lea
     leases.iter().find(|l| l.subnet == subnet).cloned()
 }
 
-pub fn is_subnet_config_compat(config: &Config, sn: Option<Ipv4Network>) -> bool {
+pub fn is_subnet_config_compat(config: &NetworkConfig, sn: Option<Ipv4Network>) -> bool {
     let sn = match sn {
         Some(sn) => sn,
         None => return false,
@@ -475,7 +477,7 @@ pub fn is_subnet_config_compat(config: &Config, sn: Option<Ipv4Network>) -> bool
     sn.prefix() == config.subnet_len
 }
 
-pub fn is_ipv6_subnet_config_compat(config: &Config, sn6: Option<Ipv6Network>) -> bool {
+pub fn is_ipv6_subnet_config_compat(config: &NetworkConfig, sn6: Option<Ipv6Network>) -> bool {
     if !config.enable_ipv6 {
         return match sn6 {
             None => true,

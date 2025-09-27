@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -79,6 +80,7 @@ pub struct ConfigsSpec {
 #[serde(deny_unknown_fields)]
 pub struct SecretSpec {}
 
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 // #[serde(transparent)]
