@@ -40,7 +40,7 @@ cargo.rust_library(
         "//third-party/rust/crates/libc/0.2.175:libc-0.2.175",
         "//third-party/rust/crates/log/0.4.28:log-0.4.28",
         "//third-party/rust/crates/memmap2/0.9.8:memmap2-0.9.8",
-        "//third-party/rust/crates/moka/0.12.10:moka-0.12.10",
+        "//third-party/rust/crates/moka/0.12.11:moka-0.12.11",
         "//third-party/rust/crates/nix/0.29.0:nix-0.29.0",
         "//third-party/rust/crates/radix_trie/0.2.1:radix_trie-0.2.1",
         "//third-party/rust/crates/reqwest/0.12.23:reqwest-0.12.23",

@@ -27,6 +27,7 @@ cargo.rust_binary(
     },
     named_deps = {
         "http_body": "//third-party/rust/crates/http-body/0.4.6:http-body-0.4.6",
+        "libfuse_fs": "//project/libfuse-fs:libfuse_fs",
         "liboci_cli": "//third-party/rust/crates/liboci-cli/0.5.5:liboci-cli-0.5.5",
         "netlink_packet_route": "//third-party/rust/crates/netlink-packet-route/0.22.0:netlink-packet-route-0.22.0",
         "oci_spec": "//third-party/rust/crates/oci-spec/0.8.2:oci-spec-0.8.2",
@@ -70,6 +71,7 @@ cargo.rust_binary(
         "//third-party/rust/crates/sysinfo/0.30.13:sysinfo-0.30.13",
         "//third-party/rust/crates/tabwriter/1.4.1:tabwriter-1.4.1",
         "//third-party/rust/crates/tar/0.4.44:tar-0.4.44",
+        "//third-party/rust/crates/thiserror/2.0.16:thiserror-2.0.16",
         "//third-party/rust/crates/tokio/1.47.1:tokio-1.47.1",
         "//third-party/rust/crates/tonic/0.13.1:tonic-0.13.1",
         "//third-party/rust/crates/tracing/0.1.41:tracing-0.1.41",
@@ -101,6 +103,7 @@ cargo.rust_library(
     },
     named_deps = {
         "http_body": "//third-party/rust/crates/http-body/0.4.6:http-body-0.4.6",
+        "libfuse_fs": "//project/libfuse-fs:libfuse_fs",
         "liboci_cli": "//third-party/rust/crates/liboci-cli/0.5.5:liboci-cli-0.5.5",
         "netlink_packet_route": "//third-party/rust/crates/netlink-packet-route/0.22.0:netlink-packet-route-0.22.0",
         "oci_spec": "//third-party/rust/crates/oci-spec/0.8.2:oci-spec-0.8.2",
@@ -144,6 +147,7 @@ cargo.rust_library(
         "//third-party/rust/crates/sysinfo/0.30.13:sysinfo-0.30.13",
         "//third-party/rust/crates/tabwriter/1.4.1:tabwriter-1.4.1",
         "//third-party/rust/crates/tar/0.4.44:tar-0.4.44",
+        "//third-party/rust/crates/thiserror/2.0.16:thiserror-2.0.16",
         "//third-party/rust/crates/tokio/1.47.1:tokio-1.47.1",
         "//third-party/rust/crates/tonic/0.13.1:tonic-0.13.1",
         "//third-party/rust/crates/tracing/0.1.41:tracing-0.1.41",
