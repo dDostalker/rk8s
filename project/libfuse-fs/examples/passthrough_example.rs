@@ -44,13 +44,13 @@ async fn main() {
     mount_options.force_readdir_plus(true).uid(uid).gid(gid);
 
     let mut mount_handle = if !args.privileged {
-        println!("Mounting passthrough (unprivileged)");
+        debug!("Mounting passthrough (unprivileged)");
         Session::new(mount_options)
             .mount_with_unprivileged(fs, mount_path)
             .await
             .expect("Unprivileged mount failed")
     } else {
-        println!("Mounting passthrough (privileged)");
+        debug!("Mounting passthrough (privileged)");
         Session::new(mount_options)
             .mount(fs, mount_path)
             .await

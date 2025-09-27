@@ -2592,13 +2592,13 @@ pub async fn mount_fs(
 
     // Mount filesystem based on privilege flag and return the mount handle
     if !privileged {
-        println!("Mounting with unprivileged mode");
+        debug!("Mounting with unprivileged mode");
         Session::new(mount_options)
             .mount_with_unprivileged(logfs, mount_path)
             .await
             .expect("Unprivileged mount failed")
     } else {
-        println!("Mounting with privileged mode");
+        debug!("Mounting with privileged mode");
         Session::new(mount_options)
             .mount(logfs, mount_path)
             .await
