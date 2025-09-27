@@ -1,5 +1,6 @@
 use crate::commands::container::config::ContainerConfigBuilder;
 use crate::commands::container::handle_image_typ;
+use crate::commands::utils::get_bundle_from_path;
 use crate::commands::{create, delete, kill, load_container, start};
 use crate::cri::cri_api::{
     CreateContainerRequest, CreateContainerResponse, LinuxContainerConfig, LinuxContainerResources,
@@ -215,8 +216,14 @@ impl TaskRunner {
         let mut config_builder = handle_image_typ(container)?;
 
         let config = if let Some(ref mut builder) = config_builder {
-            builder.images(format!("/var/lib/rkl/{}", container.name));
             builder.container_spec(container.clone())?;
+            builder.images(
+                get_bundle_from_path(&container.image)
+                    .unwrap_or_default()
+                    .to_str()
+                    .unwrap_or_default()
+                    .to_string(),
+            );
             builder.clone().build()
         } else {
             ContainerConfigBuilder::default()
@@ -567,8 +574,9 @@ impl TaskRunner {
 }
 
 // TODO: when bundle is not provided, then pull the default image from remote
+#[allow(unused)]
 fn get_pause_bundle() -> Result<String> {
-    return Err(anyhow!("local bundle path is not provided"));
+    Err(anyhow!("local bundle path is not provided"))
 }
 
 // only support limit config now.

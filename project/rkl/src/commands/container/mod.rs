@@ -308,7 +308,6 @@ impl ContainerRunner {
         let mut writer = BufWriter::new(file);
         serde_json::to_writer_pretty(&mut writer, &spec)?;
         writer.flush()?;
-        let cur_config: Spec = serde_json::from_reader(File::open(&config_path)?)?;
 
         let create_args = Create {
             bundle: bundle_path.clone().into(),

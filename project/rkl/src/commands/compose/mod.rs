@@ -199,7 +199,7 @@ impl ComposeManager {
                     name: srv
                         .container_name
                         .clone()
-                        .and_then(|str| Some(format!("compose_{}", str)))
+                        .map(|str| format!("compose_{}", str))
                         .unwrap_or(self.generate_container_name(&srv_name)),
                     image: srv.image.clone(),
                     ports: container_ports,

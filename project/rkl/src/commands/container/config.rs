@@ -145,6 +145,7 @@ impl ContainerConfigBuilder {
         self
     }
 
+    #[allow(unused)]
     pub fn metadata(&mut self, metadata: ContainerMetadata) -> &mut Self {
         self.metadata = Some(metadata);
         self

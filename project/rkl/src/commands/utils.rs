@@ -37,9 +37,9 @@ pub fn get_bundle_from_path<P: AsRef<Path>>(image_path: P) -> Result<PathBuf> {
         .as_digest_sha256()
         .unwrap_or_default();
 
-    return Ok(PathBuf::from(format!(
+    Ok(PathBuf::from(format!(
         "{RKL_IMAGE_REGISTRY}/{image_manifest_hash}"
-    )));
+    )))
 }
 
 pub fn handle_oci_image<P: AsRef<Path>>(image: P, _name: String) -> Result<ImageConfiguration> {
@@ -107,5 +107,5 @@ pub fn determine_image_path<P: AsRef<Path>>(target: P) -> Result<ImageType> {
         return Ok(ImageType::OCIImage);
     }
 
-    return Err(UtilsError::InvalidImagePath.into());
+    Err(UtilsError::InvalidImagePath.into())
 }
