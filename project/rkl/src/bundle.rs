@@ -49,20 +49,19 @@ pub async fn convert_image_to_bundle<P: AsRef<Path>, B: AsRef<Path>>(
     let bundle_path = bundle_path.as_ref();
     if bundle_path.exists() {
         debug!("{} directory exists deleting...", bundle_path.display());
-        println!("{} directory exists deleting...", bundle_path.display());
         fs::remove_dir_all(&bundle_path)
             .await
             .with_context(|| format!("failed to delete the dir {bundle_path:?}"))?;
     }
 
     fs::create_dir_all(&bundle_path).await?;
-    println!("{:?}", image_path.as_ref());
-    println!("{:?}", image_path.as_ref());
+    debug!("{:?}", image_path.as_ref());
+    debug!("{:?}", image_path.as_ref());
 
     // Extract layers from the OCI image
     let (layers, image_config) = extract_layers(image_path, &bundle_path).await?;
 
-    println!("layers: {layers:?}");
+    debug!("layers: {layers:?}");
 
     // Mount the layers and copy to the bundle
     mount_and_copy_bundle(bundle_path, &layers).await?;
@@ -86,7 +85,7 @@ async fn extract_layers<P: AsRef<Path>, B: AsRef<Path>>(
     let image_manifest_hash = image_manifest_descriptor
         .as_digest_sha256()
         .with_context(|| "Failed to get digest from manifest descriptor")?;
-    println!("image_manifest_hash: {image_manifest_hash}");
+    debug!("image_manifest_hash: {image_manifest_hash}");
 
     let image_path = image_path.as_ref().join("blobs/sha256");
 
@@ -98,13 +97,13 @@ async fn extract_layers<P: AsRef<Path>, B: AsRef<Path>>(
         .config()
         .as_digest_sha256()
         .with_context(|| "Failed to get digest from config descriptor")?;
-    println!("image_config_hash: {image_config_hash}");
+    debug!("image_config_hash: {image_config_hash}");
 
     let image_config_path = image_path.join(image_config_hash);
     let image_config = ImageConfiguration::from_file(&image_config_path)
         .with_context(|| "Failed to read config.json")?;
     let diff_ids = image_config.rootfs().diff_ids();
-    println!("Image Config: {:?}", image_config);
+    debug!("Image Config: {:?}", image_config);
 
     let layer_descriptors = image_manifest.layers();
     assert_eq!(diff_ids.len(), layer_descriptors.len());
@@ -115,7 +114,7 @@ async fn extract_layers<P: AsRef<Path>, B: AsRef<Path>>(
         let layer_digest = layer
             .as_digest_sha256()
             .with_context(|| "Failed to get digest from layer descriptor")?;
-        println!("layer_digest: {layer_digest}");
+        debug!("layer_digest: {layer_digest}");
         let layer_path = image_path.join(layer_digest);
         let layer_tar_output_path = bundle_path.join(format!("{layer_digest}.tar"));
         let layer_output_path = bundle_path.join(format!("layer{layer_digest}"));
@@ -227,7 +226,7 @@ async fn mount_and_copy_bundle<P: AsRef<Path>>(
 
     if merged_dir.exists() {
         debug!("{} directory exists deleting...", merged_dir.display());
-        println!("{} directory exists deleting...", merged_dir.display());
+        debug!("{} directory exists deleting...", merged_dir.display());
         fs::remove_dir_all(&merged_dir)
             .await
             .with_context(|| format!("failed to delete the dir {merged_dir:?}"));
@@ -235,7 +234,7 @@ async fn mount_and_copy_bundle<P: AsRef<Path>>(
 
     if upper_dir.exists() {
         debug!("{} directory exists deleting...", upper_dir.display());
-        println!("{} directory exists deleting...", upper_dir.display());
+        debug!("{} directory exists deleting...", upper_dir.display());
         fs::remove_dir_all(&upper_dir)
             .await
             .with_context(|| format!("failed to delete the dir {upper_dir:?}"));
@@ -267,7 +266,7 @@ async fn mount_and_copy_bundle<P: AsRef<Path>>(
     )
     .await;
 
-    println!("invoke libfuse_fs mount ended");
+    debug!("invoke libfuse_fs mount ended");
 
     let status = Command::new("sh")
         .arg("-c")
@@ -288,41 +287,41 @@ async fn mount_and_copy_bundle<P: AsRef<Path>>(
 
     mnt_handle.unmount().await?;
 
-    // // clean
-    // fs::remove_dir_all(&upper_dir)
-    //     .await
-    //     .with_context(|| format!("Failed to remove upper directory: {upper_dir:?}"))?;
-    // fs::remove_dir_all(&merged_dir)
-    //     .await
-    //     .with_context(|| format!("Failed to remove merged directory: {merged_dir:?}"))?;
+    // clean
+    fs::remove_dir_all(&upper_dir)
+        .await
+        .with_context(|| format!("Failed to remove upper directory: {upper_dir:?}"))?;
+    fs::remove_dir_all(&merged_dir)
+        .await
+        .with_context(|| format!("Failed to remove merged directory: {merged_dir:?}"))?;
 
-    // for layer in layers {
-    //     fs::remove_dir_all(layer)
-    //         .await
-    //         .with_context(|| format!("Failed to remove layer directory: {layer:?}"))?;
-    // }
+    for layer in layers {
+        fs::remove_dir_all(layer)
+            .await
+            .with_context(|| format!("Failed to remove layer directory: {layer:?}"))?;
+    }
 
-    // let mut entries = fs::read_dir(bundle_path)
-    //     .await
-    //     .with_context(|| format!("Failed to read directory: {bundle_path:?}"))?;
+    let mut entries = fs::read_dir(bundle_path)
+        .await
+        .with_context(|| format!("Failed to read directory: {bundle_path:?}"))?;
 
-    // while let Some(entry) = entries
-    //     .next_entry()
-    //     .await
-    //     .with_context(|| format!("Failed to read next directory entry in: {bundle_path:?}"))?
-    // {
-    //     let path = entry.path();
-    //     let metadata = fs::metadata(&path)
-    //         .await
-    //         .with_context(|| format!("Failed to get metadata for: {path:?}"))?;
+    while let Some(entry) = entries
+        .next_entry()
+        .await
+        .with_context(|| format!("Failed to read next directory entry in: {bundle_path:?}"))?
+    {
+        let path = entry.path();
+        let metadata = fs::metadata(&path)
+            .await
+            .with_context(|| format!("Failed to get metadata for: {path:?}"))?;
 
-    //     if metadata.is_file() && path.extension().is_some_and(|ext| ext == "tar") {
-    //         println!("Removing: {path:?}");
-    //         fs::remove_file(&path)
-    //             .await
-    //             .with_context(|| format!("Failed to remove tar file: {path:?}"))?;
-    //     }
-    // }
+        if metadata.is_file() && path.extension().is_some_and(|ext| ext == "tar") {
+            debug!("Removing: {path:?}");
+            fs::remove_file(&path)
+                .await
+                .with_context(|| format!("Failed to remove tar file: {path:?}"))?;
+        }
+    }
 
     Ok(())
 }
