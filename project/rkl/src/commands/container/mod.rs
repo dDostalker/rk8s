@@ -90,6 +90,7 @@ pub struct ContainerRunner {
 }
 
 impl ContainerRunner {
+    // for now just for compose
     pub fn from_spec(mut spec: ContainerSpec, root_path: Option<PathBuf>) -> Result<Self> {
         let container_id = spec.name.clone();
 
@@ -101,7 +102,7 @@ impl ContainerRunner {
         Ok(ContainerRunner {
             spec,
             config: None,
-            config_builder: ContainerConfigBuilder::default(),
+            config_builder: builder.unwrap_or_default(),
             container_id,
             root_path: match root_path {
                 Some(p) => p,
