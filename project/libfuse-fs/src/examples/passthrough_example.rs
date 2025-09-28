@@ -9,6 +9,7 @@ use libfuse_fs::passthrough::new_passthroughfs_layer;
 use rfuse3::{MountOptions, raw::Session};
 use std::ffi::OsString;
 use tokio::signal;
+use tracing::debug;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -30,7 +31,6 @@ struct Args {
 
 #[tokio::main]
 async fn main() {
-    env_logger::init();
     let args = Args::parse();
 
     let fs = new_passthroughfs_layer(&args.rootdir)

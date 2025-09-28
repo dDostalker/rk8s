@@ -7,6 +7,7 @@ use rfuse3::{Result, SetAttr};
 use std::any::type_name_of_val;
 use std::ffi::OsStr;
 use std::sync::atomic::{AtomicU64, Ordering};
+use tracing::debug;
 // LoggingFileSystem . provide log info for a filesystem trait.
 pub struct LoggingFileSystem<FS: Filesystem> {
     inner: FS,

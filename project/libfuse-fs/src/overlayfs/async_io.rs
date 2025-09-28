@@ -15,6 +15,9 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::vec::IntoIter;
+use tracing::error;
+use tracing::info;
+use tracing::trace;
 
 impl Filesystem for OverlayFs {
     /// initialize filesystem. Called before any other filesystem method.
