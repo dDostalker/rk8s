@@ -1,4 +1,5 @@
 use std::{
+    ffi::OsString,
     fs::File,
     io::{BufReader, copy},
     path::{Path, PathBuf},
@@ -12,6 +13,7 @@ use futures::future;
 use libfuse_fs::overlayfs::mount_fs;
 use oci_spec::image::{ImageConfiguration, ImageIndex, ImageManifest};
 use sha256::try_digest;
+use std::str::FromStr;
 use tar::Archive;
 use tokio::fs;
 use tracing::debug;
@@ -255,6 +257,12 @@ async fn mount_and_copy_bundle<P: AsRef<Path>>(
         .await
         .with_context(|| format!("Failed to create rootfs directory: {rootfs:?}"))?;
 
+    println!(
+        "unpacking image {:?}",
+        bundle_path
+            .file_name()
+            .unwrap_or(&OsString::from_str("unknown").unwrap())
+    );
     // mount with libfuse
     let mut mnt_handle = mount_fs(
         merged_dir.to_str().unwrap().into(),
