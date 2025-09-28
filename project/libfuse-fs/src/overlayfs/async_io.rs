@@ -944,6 +944,7 @@ mod tests {
 
     use rfuse3::{MountOptions, raw::Session};
     use tokio::signal;
+    use tracing_subscriber::EnvFilter;
 
     use crate::{
         overlayfs::{OverlayFs, config::Config},
@@ -953,9 +954,10 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_a_ovlfs() {
-        env_logger::Builder::new()
-            .filter_level(log::LevelFilter::Trace)
-            .init();
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(EnvFilter::from_default_env().add_directive("trace".parse().unwrap()))
+            .try_init();
+
         // Set up test environment
         let mountpoint = "/home/luxian/megatest/true_temp".to_string();
         let lowerdir = vec!["/home/luxian/github/buck2-rust-third-party".to_string()];
