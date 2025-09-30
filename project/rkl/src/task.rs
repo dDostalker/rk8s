@@ -19,6 +19,7 @@ use libcontainer::oci_spec::runtime::{
     ProcessBuilder, Spec,
 };
 use liboci_cli::{Create, Delete, Kill, Start};
+use oci_spec::runtime::RootBuilder;
 use std::fs;
 use std::fs::File;
 use std::io::{BufWriter, Read, Write};
@@ -186,7 +187,7 @@ impl TaskRunner {
             .unwrap_or("")
             .to_string();
         self.pause_pid = Some(pid_i32);
-        println!("podip:{podip}");
+        // println!("podip:{podip}");
         let response = RunPodSandboxResponse {
             pod_sandbox_id: sandbox_id,
         };
@@ -272,6 +273,13 @@ impl TaskRunner {
             .ok_or_else(|| anyhow!("Pause container PID is not set"))?;
         // create  OCI Spec
         let mut spec = Spec::default();
+        // change the default readonly after integarete libfuse-fs
+        let root = RootBuilder::default()
+            .readonly(false)
+            .build()
+            .unwrap_or_default();
+        spec.set_root(Some(root));
+
         let namespaces = vec![
             LinuxNamespaceBuilder::default()
                 .typ(LinuxNamespaceType::Pid)

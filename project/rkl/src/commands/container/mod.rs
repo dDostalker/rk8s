@@ -20,7 +20,7 @@ use libcontainer::{
 };
 use liboci_cli::{Create, Delete, List, Start};
 use nix::unistd::Pid;
-use oci_spec::runtime::{LinuxBuilder, ProcessBuilder, Spec, get_default_namespaces};
+use oci_spec::runtime::{LinuxBuilder, ProcessBuilder, RootBuilder, Spec, get_default_namespaces};
 use oci_spec::runtime::{Mount as OciMount, MountBuilder};
 use std::fmt::Write as fmtWrite;
 use std::{
@@ -236,11 +236,13 @@ impl ContainerRunner {
         debug!("Get Config: {:#?}", config);
 
         let mut spec = Spec::default();
-        // let root = RootBuilder::default()
-        //     .readonly(false)
-        //     .build()
-        //     .unwrap_or_default();
-        // spec.set_root(Some(root));
+
+        // support the libfuse-fs overlayerFS then need to make readonly to be false
+        let root = RootBuilder::default()
+            .readonly(false)
+            .build()
+            .unwrap_or_default();
+        spec.set_root(Some(root));
 
         // use the default namespace configuration
 
@@ -261,6 +263,7 @@ impl ContainerRunner {
         // add the CAP_NET_RAW
         add_cap_net_raw(&mut capabilities);
 
+        process.set_terminal(Some(true));
         process.set_capabilities(Some(capabilities));
         process.set_args(Some(config.args.clone()));
         // TODO: env
@@ -327,9 +330,9 @@ impl ContainerRunner {
 
     pub fn setup_container_network(&self) -> Result<()> {
         // single container status
-        if self.determine_single_status() {
-            setup_network_conf()?;
-        }
+        // if self.determine_single_status() {
+        //     setup_network_conf()?;
+        // }
 
         let mut cni = get_cni()?;
         let container_pid = self
