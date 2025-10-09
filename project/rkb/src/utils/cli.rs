@@ -46,7 +46,6 @@ pub fn original_user_name() -> User {
     // `logname` -> `me`
     // `sudo logname` -> `me`
     if let Ok(output) = Command::new("logname").output() {
-        println!("{output:?}");
         return User::Normal(String::from_utf8_lossy(&output.stdout).trim().to_string());
     }
 

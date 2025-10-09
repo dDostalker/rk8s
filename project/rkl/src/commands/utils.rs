@@ -93,7 +93,6 @@ pub fn get_image_config(manifest_path: impl AsRef<Path>) -> Result<ImageConfigur
         .digest()
         .to_string();
 
-    println!("Get config digest: {digest}");
     let dir = manifest_path.as_ref().parent().unwrap().join(digest);
     ImageConfiguration::from_file(dir).map_err(|e| anyhow!("failed to get image config: {e}"))
 }
