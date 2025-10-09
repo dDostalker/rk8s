@@ -2,7 +2,6 @@ use anyhow::Context;
 use reqwest::RequestBuilder;
 use serde::de::DeserializeOwned;
 use std::path::PathBuf;
-use std::process::Command;
 use users::os::unix::UserExt;
 
 #[async_trait::async_trait]
@@ -37,12 +36,13 @@ pub fn original_user_name() -> User {
     // `logname` command will return this directly if it is usable, which is in coreutils.
     // `logname` -> `me`
     // `sudo logname` -> `me`
-    if let Ok(output) = Command::new("logname").output() {
-        return User::Normal(String::from_utf8_lossy(&output.stdout).trim().to_string());
-    }
+    // if let Ok(output) = Command::new("logname").output() {
+    //     return User::Normal(String::from_utf8_lossy(&output.stdout).trim().to_string());
+    // }
 
     // Backup plan
     if let Ok(user) = std::env::var("SUDO_USER") {
+        println!("back up");
         return User::Normal(user);
     }
 
