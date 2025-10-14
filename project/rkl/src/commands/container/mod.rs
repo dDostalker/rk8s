@@ -4,7 +4,10 @@ use crate::{
         compose::network::{BRIDGE_CONF, CliNetworkConfig, STD_CONF_PATH},
         container::config::ContainerConfigBuilder,
         create, delete, exec, list, load_container, start,
-        utils::{ImageType, determine_image, get_bundle_from_image_ref, handle_oci_image},
+        utils::{
+            ImageType, determine_image, get_bundle_from_image_ref, handle_oci_image, parse_key_val,
+        },
+        volume::VolumeManager,
     },
     cri::cri_api::{ContainerConfig, CreateContainerResponse, Mount},
     rootpath,
@@ -44,11 +47,17 @@ pub enum ContainerCommand {
     Run {
         #[arg(value_name = "CONTAINER_YAML")]
         container_yaml: String,
+
+        #[arg(long, short = 'v')]
+        volumes: Option<Vec<String>>,
     },
     #[command(about = "Create a Container from a YAML file using rkl create container.yaml")]
     Create {
         #[arg(value_name = "CONTAINER_YAML")]
         container_yaml: String,
+
+        #[arg(long, short = 'v', value_parser=parse_key_val)]
+        volumes: Option<Vec<String>>,
     },
     #[command(about = "Start a Container with a Container-name using rkl start container-name")]
     Start {
@@ -87,6 +96,7 @@ pub struct ContainerRunner {
     config_builder: ContainerConfigBuilder,
     root_path: PathBuf,
     container_id: String,
+    volumes: Option<Vec<String>>,
 }
 
 impl ContainerRunner {
@@ -94,6 +104,7 @@ impl ContainerRunner {
     pub fn from_spec(mut spec: ContainerSpec, root_path: Option<PathBuf>) -> Result<Self> {
         let container_id = spec.name.clone();
 
+        // image pull/push support
         let builder = handle_image_typ(&spec)?;
         if builder.is_some() {
             spec.image = get_bundle_from_image_ref(spec.image)?
@@ -111,10 +122,11 @@ impl ContainerRunner {
                 Some(p) => p,
                 None => rootpath::determine(None)?,
             },
+            volumes: None,
         })
     }
 
-    pub fn from_file(spec_path: &str) -> Result<Self> {
+    pub fn from_file(spec_path: &str, volumes: Option<Vec<String>>) -> Result<Self> {
         // read the container_spec bytes
         let mut file = File::open(spec_path)
             .map_err(|e| anyhow!("open the container spec file failed: {e}"))?;
@@ -124,6 +136,7 @@ impl ContainerRunner {
 
         let mut container_spec: ContainerSpec = serde_yaml::from_str(&content)?;
 
+        // image pull/push support
         let builder = handle_image_typ(&container_spec)?;
         if builder.is_some() {
             container_spec.image = get_bundle_from_image_ref(container_spec.image)?
@@ -140,6 +153,7 @@ impl ContainerRunner {
             root_path,
             config: None,
             container_id,
+            volumes: volumes,
         })
     }
 
@@ -159,7 +173,26 @@ impl ContainerRunner {
                 Some(path) => path,
                 None => rootpath::determine(None)?,
             },
+            volumes: None,
         })
+    }
+
+    /// This function do following things:
+    /// 1. use VolumeManager to parse volumes
+    /// 2. add mount to container config
+    pub fn handle_volumes(&mut self) -> Result<Vec<String>> {
+        if let Some(volumes) = &self.volumes {
+            let mut manager = VolumeManager::new()?;
+            let (volume_names, mounts) = manager.handle_container_volume(volumes.clone())?;
+            self.add_mounts(mounts);
+
+            // set back the volume_name to runner
+            self.volumes = Some(volume_names);
+
+            Ok(vec![])
+        } else {
+            Ok(vec![])
+        }
     }
 
     pub fn add_mounts(&mut self, mounts: Vec<Mount>) {
@@ -215,13 +248,15 @@ impl ContainerRunner {
     }
 
     pub fn build_config(&mut self) -> Result<()> {
+        let _ = self.handle_volumes()?;
+
         let config = self
             .config_builder
             .container_spec(self.spec.clone())?
             .clone()
             .build();
 
-        debug!("Get Config: {:?}", config);
+        debug!("After Building Config: {:?}", config);
         self.config = Some(config);
         Ok(())
     }
@@ -277,7 +312,7 @@ impl ContainerRunner {
         Ok(spec)
     }
 
-    pub fn create_container(&self) -> Result<CreateContainerResponse> {
+    pub fn create_container(&mut self) -> Result<CreateContainerResponse> {
         let container_id = self.get_container_id()?;
         // determine if it's in the single mode
 
@@ -322,6 +357,25 @@ impl ContainerRunner {
 
         create(create_args, self.root_path.clone(), false)
             .map_err(|e| anyhow!("Failed to create container: {}", e))?;
+
+        if let Some(volumes_name) = &self.volumes {
+            // persistent the volume usage into container state.json
+            let state_path = self.root_path.join(format!("{}/state.json", container_id));
+            if !state_path.exists() {
+                return Err(anyhow!(
+                    "[container {container_id} rootpath: {state_path:?}] There is no state.json in root_path after creating container"
+                ));
+            }
+            let mut state = load_container(self.root_path.clone(), &container_id)
+                .unwrap()
+                .state;
+            state.volumes = Some(volumes_name.clone());
+            let state_json = serde_json::to_string_pretty(&state).unwrap();
+
+            debug!("[container {container_id}] update state: {state_json}");
+
+            fs::write(state_path, state_json)?;
+        }
 
         Ok(CreateContainerResponse { container_id })
     }
@@ -431,9 +485,9 @@ fn determine_mount_type(host_path: &str) -> String {
     }
 }
 
-pub fn run_container(path: &str) -> Result<(), anyhow::Error> {
+pub fn run_container(path: &str, volumes: Option<Vec<String>>) -> Result<(), anyhow::Error> {
     // read the container_spec bytes to container_spec struct
-    let mut runner = ContainerRunner::from_file(path)?;
+    let mut runner = ContainerRunner::from_file(path, volumes)?;
 
     // create container_config
     runner.build_config()?;
@@ -554,8 +608,8 @@ pub fn exec_container(args: ExecContainer, root_path: Option<PathBuf>) -> Result
     Ok(exit_code)
 }
 
-pub fn create_container(path: &str) -> Result<()> {
-    let mut runner = ContainerRunner::from_file(path)?;
+pub fn create_container(path: &str, volumes: Option<Vec<String>>) -> Result<()> {
+    let mut runner = ContainerRunner::from_file(path, volumes)?;
     runner.create()
 }
 
@@ -644,11 +698,17 @@ pub fn handle_image_typ(container_spec: &ContainerSpec) -> Result<Option<Contain
 
 pub fn container_execute(cmd: ContainerCommand) -> Result<()> {
     match cmd {
-        ContainerCommand::Run { container_yaml } => run_container(&container_yaml),
+        ContainerCommand::Run {
+            container_yaml,
+            volumes,
+        } => run_container(&container_yaml, volumes),
         ContainerCommand::Start { container_name } => start_container(&container_name),
         ContainerCommand::State { container_name } => state_container(&container_name),
         ContainerCommand::Delete { container_name } => delete_container(&container_name),
-        ContainerCommand::Create { container_yaml } => create_container(&container_yaml),
+        ContainerCommand::Create {
+            container_yaml,
+            volumes,
+        } => create_container(&container_yaml, volumes),
         ContainerCommand::List { quiet, format } => list_container(quiet, format),
         ContainerCommand::Exec(exec) => {
             // root_path => default directory
@@ -685,7 +745,7 @@ mod test {
         let yaml_path = dir.path().join("spec.yaml");
         let yaml = serde_yaml::to_string(&spec).unwrap();
         fs::write(&yaml_path, yaml).unwrap();
-        let runner2 = ContainerRunner::from_file(yaml_path.to_str().unwrap()).unwrap();
+        let runner2 = ContainerRunner::from_file(yaml_path.to_str().unwrap(), None).unwrap();
         assert_eq!(runner2.spec.name, "demo1");
     }
 
