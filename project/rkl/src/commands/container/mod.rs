@@ -20,7 +20,7 @@ use libcontainer::{
 };
 use liboci_cli::{Create, Delete, List, Start};
 use nix::unistd::Pid;
-use oci_spec::runtime::{LinuxBuilder, ProcessBuilder, Spec, get_default_namespaces};
+use oci_spec::runtime::{LinuxBuilder, ProcessBuilder, RootBuilder, Spec, get_default_namespaces};
 use oci_spec::runtime::{Mount as OciMount, MountBuilder};
 use std::fmt::Write as fmtWrite;
 use std::{
@@ -236,11 +236,12 @@ impl ContainerRunner {
         debug!("Get Config: {:#?}", config);
 
         let mut spec = Spec::default();
-        // let root = RootBuilder::default()
-        //     .readonly(false)
-        //     .build()
-        //     .unwrap_or_default();
-        // spec.set_root(Some(root));
+
+        let root = RootBuilder::default()
+            .readonly(false)
+            .build()
+            .unwrap_or_default();
+        spec.set_root(Some(root));
 
         // use the default namespace configuration
 
