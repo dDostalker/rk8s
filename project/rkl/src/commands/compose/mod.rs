@@ -13,12 +13,10 @@ use tracing::debug;
 
 use crate::{
     commands::{
-        compose::{
-            config::ConfigManager, network::NetworkManager, spec::ComposeSpec,
-            volume::VolumeManager,
-        },
+        compose::{config::ConfigManager, network::NetworkManager, spec::ComposeSpec},
         container::{ContainerRunner, remove_container},
         delete, list,
+        volume::{VolumeManager, VolumeMetadata},
     },
     rootpath,
 };
@@ -29,7 +27,6 @@ type ComposeAction = Box<dyn FnOnce(&mut ComposeManager) -> Result<()>>;
 pub mod config;
 pub mod network;
 pub mod spec;
-pub mod volume;
 
 use clap::Args;
 
@@ -79,7 +76,6 @@ pub struct ComposeManager {
     project_name: String,
     containers: Vec<State>,
     network_manager: NetworkManager,
-    volume_manager: VolumeManager,
     config_manager: ConfigManager,
 }
 
@@ -94,7 +90,6 @@ impl ComposeManager {
             root_path,
             network_manager: NetworkManager::new(project_name.clone()),
             config_manager: ConfigManager::new(),
-            volume_manager: VolumeManager::new(),
             project_name,
             containers: vec![],
         })
@@ -140,7 +135,7 @@ impl ComposeManager {
         // top-field manager handle those field
         let _ = &mut self.network_manager.handle(&spec)?;
 
-        let _ = &mut self.volume_manager.handle(&spec)?;
+        self.handle_volumes(&spec)?;
 
         let _ = &mut self.config_manager.handle(&spec);
 
@@ -208,7 +203,8 @@ impl ComposeManager {
                 };
 
                 // generate the volumes Mount
-                let volumes = VolumeManager::map_to_mount(srv.volumes.clone())?;
+                let (_, volumes) =
+                    VolumeManager::new()?.handle_container_volume(srv.volumes.clone())?;
 
                 debug!("get mount: {:#?}", volumes);
 
@@ -308,6 +304,45 @@ impl ComposeManager {
             .unwrap_or("unknown");
         let timestamp = chrono::Utc::now().timestamp() % 1000; // persist 4 bits
         format!("{root}_{srv_name}_{timestamp}")
+    }
+
+    /// This function interate the named volumes in compose spec
+    /// and create it if it is has not be created
+    pub fn handle_volumes(&mut self, compose_spec: &ComposeSpec) -> Result<()> {
+        // create volumes that are pre-defined
+        if let Some(volumes) = &compose_spec.volumes {
+            let mut global_manager = VolumeManager::new()?;
+            for (key, spec) in volumes {
+                // use existing volume
+                let volume_name = if spec.external.unwrap_or(false) {
+                    spec.name.clone().unwrap_or_else(|| key.to_string())
+                } else {
+                    format!(
+                        "{}_{}",
+                        &compose_spec
+                            .name
+                            .clone()
+                            .unwrap_or(String::from("compose_default")),
+                        key
+                    )
+                };
+                // ignore this volume is already exists
+                global_manager
+                    .create_(
+                        volume_name.clone(),
+                        spec.driver.clone(),
+                        spec.opts.clone().unwrap_or_default(),
+                    )
+                    .or_else(|e| {
+                        if !e.to_string().contains("already exists") {
+                            Err(e)
+                        } else {
+                            std::result::Result::Ok(VolumeMetadata::default())
+                        }
+                    })?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -497,23 +532,6 @@ networks:
         assert!(spec.services.contains_key("web"));
         assert_eq!(spec.services["web"].image, "test/bundles/busybox/");
         assert_eq!(spec.services["web"].volumes[0], "/tmp/mount/dir:/mnt");
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn test_map_volume_style() {
-        let volumes = vec![
-            "/tmp/mount/dir:/app/data:ro".to_string(),
-            "/tmp/data:/app/data2".to_string(),
-        ];
-        let mapped = VolumeManager::string_to_pattern(volumes).unwrap();
-        assert_eq!(mapped.len(), 2);
-        assert_eq!(mapped[0].host_path, "/tmp/mount/dir");
-        assert_eq!(mapped[0].container_path, "/app/data");
-        assert!(mapped[0].read_only);
-        assert_eq!(mapped[1].host_path, "/tmp/data");
-        assert_eq!(mapped[1].container_path, "/app/data2");
-        assert!(!mapped[1].read_only);
     }
 
     #[test]

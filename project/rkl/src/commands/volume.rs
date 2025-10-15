@@ -21,10 +21,19 @@ use crate::commands::utils::parse_key_val;
 use crate::cri::cri_api::Mount;
 
 #[derive(Debug)]
-pub enum MountType {
+pub enum PatternType {
     Anonymous,
     BindMount,
     Named,
+}
+
+#[derive(Debug)]
+#[allow(dead_code)]
+pub enum MountType {
+    Bind,
+    Nfs,
+    Tmpfs,
+    Cifs,
 }
 
 /// pattern like this "<host_path>:<container_path>:ro" read-only
@@ -36,10 +45,10 @@ pub struct VolumePattern {
     pub host_path: String,
     pub container_path: String,
     pub read_only: bool,
-    pub mount_type: MountType,
+    pub mount_type: PatternType,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VolumeMetadata {
     pub name: String,
@@ -56,9 +65,9 @@ pub struct VolumeMetadata {
 #[allow(dead_code)]
 pub enum Driver {
     Local,
-    Nfs,
-    Tmpfs,
-    Bind,
+    // TODO: Support cloud driver
+    Azure,
+    Rexray,
 }
 
 #[derive(Subcommand)]
@@ -130,7 +139,7 @@ impl VolumeManager {
 
                 debug!("get parts: {parts:?}");
 
-                let mut typ = MountType::BindMount;
+                let mut typ = PatternType::BindMount;
                 let (host_path, container_path, read_only) = match parts.len() {
                     1 => ("", parts[0], ""),
                     2 => (parts[0], parts[1], ""),
@@ -143,11 +152,11 @@ impl VolumeManager {
                 }
 
                 if host_path.is_empty() {
-                    typ = MountType::Anonymous;
+                    typ = PatternType::Anonymous;
                 }
 
                 if !host_path.contains("/") {
-                    typ = MountType::Named;
+                    typ = PatternType::Named;
                 }
 
                 Ok(VolumePattern {
@@ -191,16 +200,16 @@ impl VolumeManager {
             debug!("get volume pattern: {pattern:?}");
 
             match pattern.mount_type {
-                MountType::Anonymous => {
+                PatternType::Anonymous => {
                     let name = generate_anonymous_volume_name();
                     let resp = self.create_(name.clone(), None, HashMap::new())?;
                     mount.host_path = resp.mountpoint.to_str().unwrap().to_string();
                     volume_name = name;
                 }
-                MountType::BindMount => {
+                PatternType::BindMount => {
                     mount.host_path = pattern.host_path.clone();
                 }
-                MountType::Named => {
+                PatternType::Named => {
                     volume_name = pattern.host_path.clone();
                     // if this named volume is not exists create it automatically
                     if !self.volumes.contains_key(&volume_name) {
@@ -294,6 +303,9 @@ impl VolumeManager {
     pub fn prune_(&mut self, force: bool) -> Result<Vec<String>> {
         let mut removed = Vec::new();
         let names: Vec<String> = self.volumes.keys().cloned().collect();
+        if names.is_empty() {
+            return Ok(vec![]);
+        }
 
         for name in names {
             if force || !self.is_volume_in_use(&name)? {
@@ -308,7 +320,25 @@ impl VolumeManager {
     /// scan all the container's state json
     /// check if there is container refer this volume
     fn is_volume_in_use(&self, name: &str) -> Result<bool> {
-        let root_path = PathBuf::from_str("/run/youki/")?;
+        let root_path = PathBuf::from_str("/run/youki")?;
+        for entry in fs::read_dir(root_path)? {
+            let entry = entry?;
+            let metadata = entry.metadata()?;
+            if metadata.is_dir() {
+                if entry.file_name().to_str().unwrap().to_string() != "compose".to_string() {
+                    let content = fs::read_to_string(entry.path().join("state.json"))?;
+                    let container_state: State = serde_json::from_str(&content)?;
+                    if let Some(volumes) = container_state.volumes {
+                        if volumes.contains(&name.to_string()) {
+                            return Ok(true);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Compose
+        let root_path = PathBuf::from_str("/run/youki/compose")?;
         for entry in fs::read_dir(root_path)? {
             let entry = entry?;
             let metadata = entry.metadata()?;
