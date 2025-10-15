@@ -2,11 +2,13 @@ use std::{
     collections::HashMap,
     fs, io,
     path::{Path, PathBuf},
+    str::FromStr,
 };
 
-use anyhow::Result;
 use anyhow::anyhow;
+use anyhow::{Ok, Result};
 use clap::{ArgAction, Subcommand};
+use libcontainer::container::State;
 use rand::RngCore;
 use serde::Deserialize;
 use serde::Serialize;
@@ -48,6 +50,7 @@ pub struct VolumeMetadata {
     pub options: HashMap<String, String>,
     pub scope: String, // "local" or "global"
     pub status: HashMap<String, String>,
+    pub reference: Vec<String>, // the containers which uses this volume
 }
 
 #[allow(dead_code)]
@@ -251,6 +254,7 @@ impl VolumeManager {
             options: opts,
             scope: "local".to_string(),
             status: HashMap::new(),
+            reference: vec![],
         };
 
         self.volumes.insert(name, metadata.clone());
@@ -304,7 +308,21 @@ impl VolumeManager {
     /// scan all the container's state json
     /// check if there is container refer this volume
     fn is_volume_in_use(&self, name: &str) -> Result<bool> {
-        // TODO:
+        let root_path = PathBuf::from_str("/run/youki/")?;
+        for entry in fs::read_dir(root_path)? {
+            let entry = entry?;
+            let metadata = entry.metadata()?;
+            if metadata.is_dir() {
+                let content = fs::read_to_string(entry.path().join("state.json"))?;
+                let container_state: State = serde_json::from_str(&content)?;
+                if let Some(volumes) = container_state.volumes {
+                    if volumes.contains(&name.to_string()) {
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+
         Ok(false)
     }
 
@@ -316,7 +334,8 @@ impl VolumeManager {
 
     fn load_metadata(path: &Path) -> Result<HashMap<String, VolumeMetadata>> {
         let content = fs::read_to_string(path)?;
-        Ok(serde_json::from_str(&content)?)
+        // cache reference
+        load_volume_container_reference(serde_json::from_str(&content)?)
     }
 
     // ========Command entrypoints========
@@ -335,7 +354,6 @@ impl VolumeManager {
     fn rm(&mut self, names: Vec<String>, force: bool) -> Result<()> {
         for name in names {
             self.remove_(name.as_str(), force)?;
-            println!("{name} removed");
         }
         Ok(())
     }
@@ -373,6 +391,14 @@ impl VolumeManager {
     fn prune(&mut self, force: bool) -> Result<()> {
         self.prune_(force).and_then(|_| Ok(()))
     }
+}
+
+/// scan the container's state and update the metadata struct
+fn load_volume_container_reference(
+    content: HashMap<String, VolumeMetadata>,
+) -> Result<HashMap<String, VolumeMetadata>> {
+    // TODO:
+    Ok(content)
 }
 
 /// Generate the anonymous name useing random bytes
