@@ -296,7 +296,7 @@ impl VolumeManager {
         let names: Vec<String> = self.volumes.keys().cloned().collect();
 
         for name in names {
-            if !self.is_volume_in_use(&name)? {
+            if force || !self.is_volume_in_use(&name)? {
                 self.remove_(&name, force)?;
                 removed.push(name);
             }
