@@ -367,8 +367,12 @@ impl ContainerRunner {
         create(create_args, self.root_path.clone(), false)
             .map_err(|e| anyhow!("Failed to create container: {}", e))?;
 
+        // Single container: After creating container, persistent the volume usage into container state.json
+        // Compose: self.volumes parameter is passed by the cli parameter, so when this container is from compose
+        // self.volumes is None, this persist logic will not execute.
+        // However, to persist the compose-project's volume usage, /run/youki/<compose>/<compose-project>/metadata.json will be used.
+        // TODO: wrapper this persist logic to one util function
         if let Some(volumes_name) = &self.volumes {
-            // persistent the volume usage into container state.json
             let state_path = self.root_path.join(format!("{}/state.json", container_id));
             if !state_path.exists() {
                 return Err(anyhow!(

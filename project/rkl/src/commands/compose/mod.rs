@@ -2,13 +2,14 @@ use std::{
     env::{self},
     fs::{self, File},
     path::{Path, PathBuf},
+    vec,
 };
 
 use anyhow::{Ok, Result, anyhow};
 use clap::Subcommand;
 use libcontainer::container::State;
 use liboci_cli::{Delete, List};
-use serde_json::json;
+use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use crate::{
@@ -70,11 +71,19 @@ pub enum ComposeCommand {
     Ps(PsArgs),
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ComposeMetadata {
+    pub containers: Vec<State>,
+    pub volumes: Vec<String>,
+    pub project_name: String,
+}
+
 pub struct ComposeManager {
     /// the path to store the basic info of compose application
     root_path: PathBuf,
     project_name: String,
     containers: Vec<State>,
+    volumes: Vec<String>,
     network_manager: NetworkManager,
     config_manager: ConfigManager,
 }
@@ -92,6 +101,7 @@ impl ComposeManager {
             config_manager: ConfigManager::new(),
             project_name,
             containers: vec![],
+            volumes: vec![],
         })
     }
 
@@ -156,16 +166,17 @@ impl ComposeManager {
     ///{
     /// "project_name": "",
     /// "containers": [ {} {},],
-    /// ""
+    /// "volumes":[]
     ///}
     fn persist_compose_state(&self) -> Result<()> {
-        let obj = json!({
-            "project_name": self.project_name,
-            "containers": &self.containers
-        });
-        let json_str = serde_json::to_string_pretty(&obj)?;
+        let metadata = ComposeMetadata {
+            containers: self.containers.clone(),
+            volumes: self.volumes.clone(),
+            project_name: self.project_name.clone(),
+        };
+        let json_str = serde_json::to_string_pretty(&metadata)?;
 
-        let file_path = self.root_path.join("state.json");
+        let file_path = self.root_path.join("metadata.json");
         fs::create_dir_all(&self.root_path)?;
         fs::write(file_path, json_str)?;
         Ok(())
@@ -225,10 +236,12 @@ impl ComposeManager {
 
                 // println!("compose get volume patterns: {patterns:?}");
                 // generate the volumes Mount
-                let (_, volumes) =
+                let (mut volumes, mounts) =
                     VolumeManager::new()?.handle_container_volume(patterns?, true)?;
 
-                debug!("get mount: {:#?}", volumes);
+                self.volumes.append(&mut volumes);
+
+                debug!("get mount: {:#?}", mounts);
 
                 //  setup the network_conf file
                 self.network_manager
@@ -245,7 +258,7 @@ impl ComposeManager {
                 let mut runner =
                     ContainerRunner::from_spec(container_spec, Some(self.root_path.clone()))?;
 
-                runner.add_mounts(volumes);
+                runner.add_mounts(mounts);
                 runner.add_mounts(configs_mounts);
 
                 match runner.run() {
@@ -278,6 +291,7 @@ impl ComposeManager {
             }
         }
         // return the compose application's state
+        //
         Ok(())
     }
 

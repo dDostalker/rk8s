@@ -17,7 +17,7 @@ use std::io::Write;
 use tabwriter::TabWriter;
 use tracing::debug;
 
-use crate::commands::utils::parse_key_val;
+use crate::commands::{compose::ComposeMetadata, utils::parse_key_val};
 use crate::cri::cri_api::Mount;
 
 #[derive(Debug)]
@@ -252,6 +252,7 @@ impl VolumeManager {
         if !force && self.is_volume_in_use(name)? {
             return Err(anyhow!("volume {} is in use", name));
         }
+
         println!("{}", name);
 
         fs::remove_dir_all(&volume.mountpoint.parent().unwrap())?;
@@ -279,10 +280,8 @@ impl VolumeManager {
         }
 
         for name in names {
-            if force || !self.is_volume_in_use(&name)? {
-                self.remove_(&name, force)?;
-                removed.push(name);
-            }
+            self.remove_(&name, force)?;
+            removed.push(name);
         }
 
         Ok(removed)
@@ -311,21 +310,20 @@ impl VolumeManager {
 
         // Compose
         let root_path = PathBuf::from_str("/run/youki/compose")?;
-        for first_layer in fs::read_dir(root_path)? {
-            let first_layer = first_layer?;
-            if first_layer.metadata().unwrap().is_dir() {
-                for entry in fs::read_dir(first_layer.path())? {
-                    let entry = entry?;
-                    let metadata = entry.metadata()?;
-                    // first layer is the <compose_name>
-                    if metadata.is_dir() {
-                        let content = fs::read_to_string(entry.path().join("state.json"))?;
-                        let container_state: State = serde_json::from_str(&content)?;
-                        if let Some(volumes) = container_state.volumes {
-                            if volumes.contains(&name.to_string()) {
-                                return Ok(true);
-                            }
-                        }
+        for dir_entry in fs::read_dir(root_path)? {
+            let dir_entry = dir_entry?;
+            if dir_entry.metadata().unwrap().is_dir() {
+                let path = dir_entry.path().join("metadata.json");
+                if path.exists() {
+                    let content = fs::read_to_string(path).map_err(|e| {
+                        anyhow!(
+                            "failed to read compose {:?} metada.json error: {e:?}",
+                            dir_entry.file_name(),
+                        )
+                    })?;
+                    let metadata: ComposeMetadata = serde_json::from_str(&content)?;
+                    if metadata.volumes.contains(&name.to_string()) {
+                        return Ok(true);
                     }
                 }
             }
