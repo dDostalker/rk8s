@@ -7,7 +7,7 @@ use crate::{
         utils::{
             ImageType, determine_image, get_bundle_from_image_ref, handle_oci_image, parse_key_val,
         },
-        volume::VolumeManager,
+        volume::{VolumeManager, VolumePattern, string_to_pattern},
     },
     cri::cri_api::{ContainerConfig, CreateContainerResponse, Mount},
     rootpath,
@@ -183,7 +183,16 @@ impl ContainerRunner {
     pub fn handle_volumes(&mut self) -> Result<Vec<String>> {
         if let Some(volumes) = &self.volumes {
             let mut manager = VolumeManager::new()?;
-            let (volume_names, mounts) = manager.handle_container_volume(volumes.clone())?;
+
+            let parsed_pattern: Result<Vec<VolumePattern>> = volumes
+                .iter()
+                .map(|v| v.as_str())
+                .map(string_to_pattern)
+                .collect();
+
+            let parsed_pattern = parsed_pattern?;
+
+            let (volume_names, mounts) = manager.handle_container_volume(parsed_pattern, false)?;
             self.add_mounts(mounts);
 
             // set back the volume_name to runner

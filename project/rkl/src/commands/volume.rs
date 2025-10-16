@@ -45,7 +45,7 @@ pub struct VolumePattern {
     pub host_path: String,
     pub container_path: String,
     pub read_only: bool,
-    pub mount_type: PatternType,
+    pub pattern_type: PatternType,
 }
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
@@ -131,54 +131,19 @@ impl VolumeManager {
         })
     }
 
-    pub fn string_to_pattern(&self, volumes: Vec<String>) -> Result<Vec<VolumePattern>> {
-        volumes
-            .into_iter()
-            .map(|v| {
-                let parts: Vec<&str> = v.split(":").collect();
-
-                debug!("get parts: {parts:?}");
-
-                let mut typ = PatternType::BindMount;
-                let (host_path, container_path, read_only) = match parts.len() {
-                    1 => ("", parts[0], ""),
-                    2 => (parts[0], parts[1], ""),
-                    3 => (parts[0], parts[1], parts[2]),
-                    _ => return Err(anyhow!("Invalid volumes mapping syntax in compose file")),
-                };
-                // validate the read_only str
-                if !read_only.is_empty() && !read_only.eq("ro") {
-                    return Err(anyhow!("Invalid volumes mapping syntax in compose file"));
-                }
-
-                if host_path.is_empty() {
-                    typ = PatternType::Anonymous;
-                }
-
-                if !host_path.contains("/") {
-                    typ = PatternType::Named;
-                }
-
-                Ok(VolumePattern {
-                    host_path: host_path.to_string(),
-                    container_path: container_path.to_string(),
-                    read_only: !read_only.is_empty(),
-                    mount_type: typ,
-                })
-            })
-            .collect()
-    }
-
     /// This function used to handle the container's volumes
     /// parse the VolumePattern like "<host_path>:<container_path>:ro" directly to cri::Mount.
     /// And return two things:
     /// 1. Vec<Mount>
     /// 2. Vec<String> the volume name array
+    ///
+    /// is_compose: if this volume is from compose, then when this volume is named, this volume will not be created
+    /// here.(Because it's created when compose parse the compose_spec)
     pub fn handle_container_volume(
         &mut self,
-        volume_str: Vec<String>,
+        parsed_pattern: Vec<VolumePattern>,
+        is_compose: bool,
     ) -> Result<(Vec<String>, Vec<Mount>)> {
-        let parsed_pattern = self.string_to_pattern(volume_str)?;
         let mut mounts: Vec<Mount> = vec![];
         let mut volume_names: Vec<String> = vec![];
         for pattern in parsed_pattern {
@@ -199,7 +164,7 @@ impl VolumeManager {
 
             debug!("get volume pattern: {pattern:?}");
 
-            match pattern.mount_type {
+            match pattern.pattern_type {
                 PatternType::Anonymous => {
                     let name = generate_anonymous_volume_name();
                     let resp = self.create_(name.clone(), None, HashMap::new())?;
@@ -211,8 +176,14 @@ impl VolumeManager {
                 }
                 PatternType::Named => {
                     volume_name = pattern.host_path.clone();
-                    // if this named volume is not exists create it automatically
-                    if !self.volumes.contains_key(&volume_name) {
+
+                    // for compose if there is a undefined volume. then return Error
+                    if is_compose && !self.volumes.contains_key(&volume_name) {
+                        return Err(anyhow!("{} is not defined in compose spec", volume_name));
+                    }
+
+                    // for single container if this named volume is not exists create it automatically
+                    if !is_compose && !self.volumes.contains_key(&volume_name) {
                         let _ = self.create_(volume_name.clone(), None, HashMap::new())?;
                     }
                     mount.host_path = self.get_mountpoint_from_name(&volume_name)?;
@@ -325,6 +296,7 @@ impl VolumeManager {
             let entry = entry?;
             let metadata = entry.metadata()?;
             if metadata.is_dir() {
+                // TODO: Hard code "compose", which means there is no container can be named as "compose"
                 if entry.file_name().to_str().unwrap().to_string() != "compose".to_string() {
                     let content = fs::read_to_string(entry.path().join("state.json"))?;
                     let container_state: State = serde_json::from_str(&content)?;
@@ -339,15 +311,21 @@ impl VolumeManager {
 
         // Compose
         let root_path = PathBuf::from_str("/run/youki/compose")?;
-        for entry in fs::read_dir(root_path)? {
-            let entry = entry?;
-            let metadata = entry.metadata()?;
-            if metadata.is_dir() {
-                let content = fs::read_to_string(entry.path().join("state.json"))?;
-                let container_state: State = serde_json::from_str(&content)?;
-                if let Some(volumes) = container_state.volumes {
-                    if volumes.contains(&name.to_string()) {
-                        return Ok(true);
+        for first_layer in fs::read_dir(root_path)? {
+            let first_layer = first_layer?;
+            if first_layer.metadata().unwrap().is_dir() {
+                for entry in fs::read_dir(first_layer.path())? {
+                    let entry = entry?;
+                    let metadata = entry.metadata()?;
+                    // first layer is the <compose_name>
+                    if metadata.is_dir() {
+                        let content = fs::read_to_string(entry.path().join("state.json"))?;
+                        let container_state: State = serde_json::from_str(&content)?;
+                        if let Some(volumes) = container_state.volumes {
+                            if volumes.contains(&name.to_string()) {
+                                return Ok(true);
+                            }
+                        }
                     }
                 }
             }
@@ -436,6 +414,37 @@ fn generate_anonymous_volume_name() -> String {
     let mut bytes = [0u8; 32]; // 32 bytes = 64 hex chars
     rand::rng().fill_bytes(&mut bytes);
     hex::encode(bytes)
+}
+
+pub fn string_to_pattern(v: &str) -> Result<VolumePattern> {
+    let parts: Vec<&str> = v.split(":").collect();
+
+    debug!("[string_to_pattern] get volume string: {v:?}  get parts: {parts:?}");
+
+    let mut typ = PatternType::BindMount;
+    let (host_path, container_path, read_only) = match parts.len() {
+        1 => ("", parts[0], ""),
+        2 => (parts[0], parts[1], ""),
+        3 => (parts[0], parts[1], parts[2]),
+        _ => return Err(anyhow!("Invalid volumes mapping syntax in compose file")),
+    };
+    // validate the read_only str
+    if !read_only.is_empty() && !read_only.eq("ro") {
+        return Err(anyhow!("Invalid volumes mapping syntax in compose file"));
+    }
+
+    if host_path.is_empty() {
+        typ = PatternType::Anonymous;
+    } else if !host_path.contains('/') {
+        typ = PatternType::Named;
+    }
+
+    Ok(VolumePattern {
+        host_path: host_path.to_string(),
+        container_path: container_path.to_string(),
+        read_only: !read_only.is_empty(),
+        pattern_type: typ,
+    })
 }
 
 pub fn volume_execute(cmd: VolumeCommand) -> Result<()> {

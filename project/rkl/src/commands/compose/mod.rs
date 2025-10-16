@@ -16,7 +16,7 @@ use crate::{
         compose::{config::ConfigManager, network::NetworkManager, spec::ComposeSpec},
         container::{ContainerRunner, remove_container},
         delete, list,
-        volume::{VolumeManager, VolumeMetadata},
+        volume::{PatternType, VolumeManager, VolumeMetadata, VolumePattern, string_to_pattern},
     },
     rootpath,
 };
@@ -182,7 +182,7 @@ impl ComposeManager {
         Ok(spec)
     }
 
-    fn run(&mut self, _: &ComposeSpec) -> Result<()> {
+    fn run(&mut self, spec: &ComposeSpec) -> Result<()> {
         let network_mapping = self.network_manager.network_service_mapping();
 
         for (network_name, services) in network_mapping {
@@ -202,9 +202,31 @@ impl ComposeManager {
                     resources: None,
                 };
 
+                // handle the services volume name
+                let mut patterns: Result<Vec<VolumePattern>> = srv
+                    .volumes
+                    .iter()
+                    .map(|v| v.as_str())
+                    .map(string_to_pattern)
+                    .collect();
+
+                patterns = patterns.map(|mut vec| {
+                    vec.iter_mut().for_each(|pattern| {
+                        if let PatternType::Named = pattern.pattern_type {
+                            pattern.host_path = format!(
+                                "{}_{}",
+                                spec.name.clone().unwrap_or("compose_default".to_string()),
+                                pattern.host_path
+                            );
+                        }
+                    });
+                    vec
+                });
+
+                // println!("compose get volume patterns: {patterns:?}");
                 // generate the volumes Mount
                 let (_, volumes) =
-                    VolumeManager::new()?.handle_container_volume(srv.volumes.clone())?;
+                    VolumeManager::new()?.handle_container_volume(patterns?, true)?;
 
                 debug!("get mount: {:#?}", volumes);
 
@@ -218,7 +240,6 @@ impl ComposeManager {
                             e
                         )
                     })?;
-                // get config
                 let configs_mounts = self.config_manager.get_mounts_by_service(&srv_name);
 
                 let mut runner =
@@ -309,10 +330,11 @@ impl ComposeManager {
     /// This function interate the named volumes in compose spec
     /// and create it if it is has not be created
     pub fn handle_volumes(&mut self, compose_spec: &ComposeSpec) -> Result<()> {
-        // create volumes that are pre-defined
+        // create volumes that are pre-defined in compose specification
         if let Some(volumes) = &compose_spec.volumes {
             let mut global_manager = VolumeManager::new()?;
             for (key, spec) in volumes {
+                println!("compose get volume: {}", key);
                 // use existing volume
                 let volume_name = if spec.external.unwrap_or(false) {
                     spec.name.clone().unwrap_or_else(|| key.to_string())
