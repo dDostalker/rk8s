@@ -69,7 +69,7 @@ pub struct VolumeSpec {
     // Determine to use external volume
     pub external: Option<bool>,
 
-    // Specifiy the external volume's name default is the key String
+    // Specify the external volume's name default is the key String
     pub name: Option<String>,
 }
 

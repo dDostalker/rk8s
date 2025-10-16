@@ -130,5 +130,5 @@ pub fn determine_image_path<P: AsRef<Path>>(target: P) -> Result<ImageType> {
 pub fn parse_key_val(s: &str) -> Result<(String, String), String> {
     s.split_once("=")
         .map(|(k, v)| (k.to_string(), v.to_string()))
-        .ok_or_else(|| format!("invalid KEY=VAULT: '{}'", s))
+        .ok_or_else(|| format!("invalid KEY=VALUE: '{}'", s))
 }

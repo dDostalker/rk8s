@@ -199,7 +199,7 @@ impl VolumeManager {
 
     pub fn get_mountpoint_from_name(&self, name: &str) -> Result<String> {
         // TODO: handle does not exist situation
-        // Ok(self.volumes.get(name).ok_or_else(|| format!("the volume name doest not exist"))?.mountpoint.to_str().unwrap().to_string())
+        // Ok(self.volumes.get(name).ok_or_else(|| format!("the volume name does not exist"))?.mountpoint.to_str().unwrap().to_string())
         Ok(self
             .volumes
             .get(name)
@@ -407,7 +407,7 @@ fn load_volume_container_reference(
     Ok(content)
 }
 
-/// Generate the anonymous name useing random bytes
+/// Generate the anonymous name using random bytes
 fn generate_anonymous_volume_name() -> String {
     let mut bytes = [0u8; 32]; // 32 bytes = 64 hex chars
     rand::rng().fill_bytes(&mut bytes);
