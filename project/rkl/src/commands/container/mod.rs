@@ -265,7 +265,7 @@ impl ContainerRunner {
             .clone()
             .build();
 
-        debug!("After Building Config: {:?}", config);
+        debug!("After building config: {:#?}", config);
         self.config = Some(config);
         Ok(())
     }
@@ -277,7 +277,7 @@ impl ContainerRunner {
             .as_ref()
             .ok_or_else(|| anyhow!("Container's Config is required"))?;
 
-        debug!("Get Config: {:#?}", config);
+        debug!("Get container config while create oci_spec: {:#?}", config);
 
         let mut spec = Spec::default();
 
@@ -288,7 +288,6 @@ impl ContainerRunner {
         spec.set_root(Some(root));
 
         // use the default namespace configuration
-
         let namespaces = get_default_namespaces();
 
         let mut linux: LinuxBuilder = LinuxBuilder::default().namespaces(namespaces);
@@ -326,13 +325,20 @@ impl ContainerRunner {
         // determine if it's in the single mode
 
         //  create oci spec
-        let spec: Spec = self.create_oci_spec()?;
+        let oci_spec: Spec = self.create_oci_spec()?;
+
+        debug!(
+            "[container {}] created oci_spec {:?}",
+            self.spec.name, oci_spec
+        );
 
         // create a config.path at the bundle path
-        // TODO: Here use the local file path directly
         let bundle_path = self.spec.image.clone();
         if bundle_path.is_empty() {
-            return Err(anyhow!("Bundle path (image) is empty"));
+            return Err(anyhow!(
+                "[container {}] Bundle path is empty",
+                self.spec.name
+            ));
         }
         let bundle_dir = Path::new(&bundle_path);
         if !bundle_dir.exists() {
@@ -351,7 +357,7 @@ impl ContainerRunner {
         }
         let file = File::create(&config_path)?;
         let mut writer = BufWriter::new(file);
-        serde_json::to_writer_pretty(&mut writer, &spec)?;
+        serde_json::to_writer_pretty(&mut writer, &oci_spec)?;
         writer.flush()?;
 
         let create_args = Create {

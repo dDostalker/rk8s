@@ -14,6 +14,8 @@ use anyhow::Ok;
 use anyhow::Result;
 use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use serde_json::json;
 
 pub const CNI_VERSION: &str = "1.0.0";
 pub const STD_CONF_PATH: &str = "/etc/cni/net.d";
@@ -49,10 +51,7 @@ pub struct CliNetworkConfig {
     pub mac_spoof_check: Option<bool>,
     /// IPAM type（like host-local, static, etc.）
     #[serde(default)]
-    pub ipam_type: Option<String>,
-    /// IPAM configuration's file path（Optional）
-    #[serde(default)]
-    pub ipam_config: Option<String>,
+    pub ipam: Option<IpamConfig>,
     /// enable hairpin mod
     #[serde(default)]
     pub hairpin_mode: Option<bool>,
@@ -62,6 +61,26 @@ pub struct CliNetworkConfig {
     /// VLAN Trunk
     #[serde(default)]
     pub vlan_trunk: Option<Vec<u16>>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IpamConfig {
+    /// Name of the IPAM plugin binary on disk.
+    ///
+    /// This is called `type` in the JSON.
+    #[serde(rename = "type")]
+    pub plugin: String,
+
+    /// All other IPAM fields.
+    ///
+    /// This is a [`serde(flatten)`](https://serde.rs/field-attrs.html#flatten)
+    /// field which aggregates any and all additional fields apart from the
+    /// `plugin` field above.
+    ///
+    /// The spec describes nothing in particular for this section, so it is
+    /// entirely up to plugins to interpret it as required.
+    #[serde(flatten)]
+    pub specific: HashMap<String, Value>,
 }
 
 impl CliNetworkConfig {
@@ -76,6 +95,15 @@ impl CliNetworkConfig {
 
 impl Default for CliNetworkConfig {
     fn default() -> Self {
+        let specific: HashMap<String, serde_json::Value> = [
+            ("type", json!(BRIDGE_PLUGIN_NAME)),
+            ("subnet", json!("10.10.1.0/24")),
+            ("gateway", json!("10.10.1.0")),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
+
         Self {
             cni_version: String::from(CNI_VERSION),
             plugin: String::from(BRIDGE_PLUGIN_NAME),
@@ -85,11 +113,13 @@ impl Default for CliNetworkConfig {
             is_gateway: Some(true),
             mtu: Some(1500),
             mac_spoof_check: Default::default(),
-            ipam_type: Default::default(),
-            ipam_config: Default::default(),
             hairpin_mode: Default::default(),
             vlan: Default::default(),
             vlan_trunk: Default::default(),
+            ipam: Some(IpamConfig {
+                plugin: BRIDGE_PLUGIN_NAME.to_string(),
+                specific,
+            }),
         }
     }
 }
