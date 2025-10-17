@@ -153,7 +153,7 @@ impl ContainerRunner {
             root_path,
             config: None,
             container_id,
-            volumes: volumes,
+            volumes,
         })
     }
 
