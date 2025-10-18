@@ -27,6 +27,7 @@ jobs:
 
           sudo cp $(buck2 build //project/libbridge:libbridge --show-output | cut -d' ' -f2) /opt/cni/bin/libbridge
           sudo cp $(buck2 build //project/libipam:libipam --show-output | cut -d' ' -f2) /opt/cni/bin/libipam
+          sudo cp $(buck2 build //project/libnetwork:libnetwork --show-output | cut -d' ' -f2) /opt/cni/bin/libnetwork
 
       - name: Run tests
         run: |
