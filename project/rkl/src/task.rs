@@ -684,6 +684,28 @@ pub fn get_cni() -> Result<Libcni, anyhow::Error> {
     Ok(cni)
 }
 
+pub fn add_cap_net_admin(capabilities: &mut LinuxCapabilities) {
+    let mut bounding = capabilities.bounding().clone().unwrap();
+    bounding.insert(Capability::NetAdmin);
+    capabilities.set_bounding(Some(bounding));
+
+    let mut effective = capabilities.effective().clone().unwrap();
+    effective.insert(Capability::NetAdmin);
+    capabilities.set_effective(Some(effective));
+
+    let mut inheritable = capabilities.inheritable().clone().unwrap();
+    inheritable.insert(Capability::NetAdmin);
+    capabilities.set_inheritable(Some(inheritable));
+
+    let mut permitted = capabilities.permitted().clone().unwrap();
+    permitted.insert(Capability::NetAdmin);
+    capabilities.set_permitted(Some(permitted));
+
+    let mut ambient = capabilities.ambient().clone().unwrap();
+    ambient.insert(Capability::NetAdmin);
+    capabilities.set_ambient(Some(ambient));
+}
+
 pub fn add_cap_net_raw(capabilities: &mut LinuxCapabilities) {
     let mut bounding = capabilities.bounding().clone().unwrap();
     bounding.insert(Capability::NetRaw);

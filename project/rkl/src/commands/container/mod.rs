@@ -11,7 +11,7 @@ use crate::{
     },
     cri::cri_api::{ContainerConfig, CreateContainerResponse, Mount},
     rootpath,
-    task::{add_cap_net_raw, get_cni},
+    task::{add_cap_net_admin, add_cap_net_raw, get_cni},
 };
 use anyhow::{Ok, Result, anyhow};
 use chrono::{DateTime, Local};
@@ -304,8 +304,10 @@ impl ContainerRunner {
         let mut capabilities = process.capabilities().clone().unwrap();
         // add the CAP_NET_RAW
         add_cap_net_raw(&mut capabilities);
+        add_cap_net_admin(&mut capabilities);
 
         process.set_capabilities(Some(capabilities));
+        process.set_terminal(Some(false));
         process.set_args(Some(config.args.clone()));
         // TODO: env
         // process.set_env(Some(config.envs));
@@ -402,7 +404,7 @@ impl ContainerRunner {
     pub fn setup_container_network(&self) -> Result<()> {
         // single container status
         if self.determine_single_status() {
-            setup_network_conf()?;
+            // setup_network_conf()?;
         }
 
         let mut cni = get_cni()?;
@@ -413,7 +415,7 @@ impl ContainerRunner {
         cni.load_default_conf();
 
         cni.setup(
-            self.container_id.clone(),
+            format!("{container_pid}"),
             format!("/proc/{container_pid}/ns/net"),
         )
         .map_err(|e| anyhow::anyhow!("Failed to add CNI network: {}", e))?;
