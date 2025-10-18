@@ -73,19 +73,33 @@ deb-src https://mirrors.tuna.tsinghua.edu.cn/ubuntu/ noble-security main restric
 EOF
 
 RUN apt-get update && \
-    apt-get install -y --fix-missing --no-install-recommends \
+    apt-get install --fix-missing -y --no-install-recommends \
     wget \
     curl \
     iproute2 \
+    iptables \
+    ipset \
     net-tools \
     dnsutils \
     iputils-ping \
+    traceroute \
+    tcpdump \
+    ethtool \
+    netcat-openbsd \
+    procps \
+    psmisc \
+    lsof \
     vim \
     less \
+    tar \
+    gzip \
+    unzip \
+    file \
     sudo \
     ca-certificates && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
+
 
 WORKDIR /root
 
