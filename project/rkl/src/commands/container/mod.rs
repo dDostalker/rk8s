@@ -404,7 +404,7 @@ impl ContainerRunner {
     pub fn setup_container_network(&self) -> Result<()> {
         // single container status
         if self.determine_single_status() {
-            // setup_network_conf()?;
+            setup_network_conf()?;
         }
 
         let mut cni = get_cni()?;
