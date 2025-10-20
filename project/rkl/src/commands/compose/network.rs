@@ -79,8 +79,8 @@ impl CliNetworkConfig {
 
     /// Due to compose will need a unique subnet
     /// this function need two extra parameter
-    /// - subnet_addr
-    /// - gateway_addr
+    ///   - subnet_addr
+    ///   - gateway_addr
     /// by default the subnet prefix is 16
     pub fn from_subnet_gateway(
         network_name: &str,
