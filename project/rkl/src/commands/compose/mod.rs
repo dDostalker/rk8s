@@ -209,7 +209,7 @@ impl ComposeManager {
         for (network_name, services) in network_mapping {
             println!("Creating network: {network_name}");
             let mut ordered: Vec<(String, ServiceSpec)> = services.clone();
-            ordered.sort_by_key(|(name, _)| self.startup_order.get(name).clone().unwrap());
+            ordered.sort_by_key(|(name, _)| self.startup_order.get(name).unwrap());
 
             for (srv_name, srv) in ordered.into_iter() {
                 let container_ports = map_port_style(srv.ports.clone())?;
