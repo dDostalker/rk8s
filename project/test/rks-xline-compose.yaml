@@ -4,19 +4,24 @@ services:
   rks:
     container_name: rks
     image: ./rks-bundle
-    command: [ "rks", "start", "--config", "/usr/src/rks-config.yaml" ]
+    command: [
+      "/bin/sh",
+      "-c",
+      "sleep 10 && rks start --config /usr/src/rks-config.yaml" # wait for xline to startup
+    ]
     ports:
       - "50051:50051"
     networks:
       - rks-xline
     volumes:
       - ./rks-config.yaml:/usr/src/rks-config.yaml
+    depends_on:
+      - xline
   xline:
     container_name: xline
     image: ./xline-bundle
     command:
       - "xline"
-      - "RUST_LOG=debug"
       - "--name"
       - "xline"
       - "--storage-engine"
@@ -33,12 +38,12 @@ services:
       - "http://127.0.0.1:2379"
       - "--peer-advertise-urls"
       - "http://127.0.0.1:2380"
-
     ports:
       - "2379:2379"
     networks:
       - rks-xline
-    volumes: # - /usr/local/xline/data-dir
+    volumes:
+      # - /usr/local/xline/data-dir
 networks:
   rks-xline:
     driver: bridge
