@@ -21,6 +21,7 @@ jobs:
         run: |
           buck2 build //project/libbridge:libbridge
           buck2 build //project/libipam:libipam
+          buck2 build //project/libnetwork:libnetwork
 
           sudo mkdir -p /opt/cni/bin
           sudo mkdir -p /etc/cni/net.d
