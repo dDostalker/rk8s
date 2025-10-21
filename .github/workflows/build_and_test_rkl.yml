@@ -24,8 +24,6 @@ jobs:
           buck2 build //project/libnetwork:libnetwork
 
           sudo mkdir -p /opt/cni/bin
-           
-          sudo rm -rf /etc/cni/net.d
           sudo mkdir -p /etc/cni/net.d
 
           sudo cp $(buck2 build //project/libbridge:libbridge --show-output | cut -d' ' -f2) /opt/cni/bin/libbridge
