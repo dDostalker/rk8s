@@ -58,7 +58,7 @@ pub struct CliNetworkConfig {
     #[serde(default)]
     pub ipam: Option<IPAMConfig>,
     /// enable hairpin mod
-    #[serde(default)]
+    #[serde(default, rename = "hairpinMode")]
     pub hairpin_mode: Option<bool>,
     /// VLAN ID
     #[serde(default)]
@@ -66,6 +66,10 @@ pub struct CliNetworkConfig {
     /// VLAN Trunk
     #[serde(default)]
     pub vlan_trunk: Option<Vec<u16>>,
+    #[serde(default, rename = "ipMasq")]
+    pub ip_masq: Option<bool>,
+    #[serde(default, rename = "forceAddress")]
+    pub force_address: Option<bool>,
 }
 
 impl CliNetworkConfig {
@@ -110,6 +114,10 @@ impl CliNetworkConfig {
                 ranges: vec![set],
                 ip_args: vec![],
             }),
+            hairpin_mode: Some(true),
+            is_default_gateway: Some(true),
+            force_address: Some(false),
+            ip_masq: Some(true),
             ..Default::default()
         }
     }
@@ -151,6 +159,8 @@ impl Default for CliNetworkConfig {
                 ranges: vec![set],
                 ip_args: vec![],
             }),
+            ip_masq: Some(true),
+            force_address: Some(false),
         }
     }
 }
@@ -193,8 +203,8 @@ impl NetworkManager {
             )
         })?;
 
-        let subnet_addr = Ipv4Addr::new(10, 20, 0, 0);
-        let gateway_addr = Ipv4Addr::new(10, 20, 0, 1);
+        let subnet_addr = Ipv4Addr::new(10, 10, 0, 0);
+        let gateway_addr = Ipv4Addr::new(10, 10, 0, 1);
 
         let conf = CliNetworkConfig::from_subnet_gateway(
             network_name,
