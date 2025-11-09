@@ -29,6 +29,7 @@ pub const BRIDGE_PLUGIN_NAME: &str = "libbridge";
 pub const BRIDGE_CONF: &str = "rkl-standalone-bridge.conf";
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CliNetworkConfig {
     /// default is 1.0.0
     #[serde(default)]
