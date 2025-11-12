@@ -300,6 +300,9 @@ impl ComposeManager {
                         return Err(err);
                     }
                 };
+                self.network_manager
+                    .after_container_started(runner)
+                    .unwrap();
             }
         }
         // return the compose application's state

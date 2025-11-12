@@ -17,6 +17,7 @@ use libipam::range_set::RangeSet;
 use crate::commands::compose::spec::ComposeSpec;
 use crate::commands::compose::spec::NetworkSpec;
 use crate::commands::compose::spec::ServiceSpec;
+use crate::commands::container::ContainerRunner;
 use anyhow::Ok;
 use anyhow::Result;
 use anyhow::anyhow;
@@ -307,6 +308,19 @@ impl NetworkManager {
                 };
             }
         }
+        Ok(())
+    }
+
+    /// This function act as a hook func, doese network-related stuff after container started
+    /// Currently, it will do the following things:
+    ///
+    /// 1. Record the container's IP to storage(target file)
+    ///
+    pub(crate) fn after_container_started(&self, runner: ContainerRunner) -> Result<()> {
+        let container_ip = runner
+            .ip()
+            .ok_or_else(|| anyhow!("[container {}]Empty IP address for container", runner.id()))?;
+
         Ok(())
     }
 }

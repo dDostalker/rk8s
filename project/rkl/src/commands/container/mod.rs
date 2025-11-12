@@ -17,6 +17,7 @@ use anyhow::{Ok, Result, anyhow};
 use chrono::{DateTime, Local};
 use clap::Subcommand;
 use common::ContainerSpec;
+use json::JsonValue;
 use libcontainer::{
     container::{Container, ContainerStatus, State, state},
     error::LibcontainerError,
@@ -25,10 +26,14 @@ use liboci_cli::{Create, Delete, List, Start};
 use nix::unistd::Pid;
 use oci_spec::runtime::{LinuxBuilder, ProcessBuilder, RootBuilder, Spec, get_default_namespaces};
 use oci_spec::runtime::{Mount as OciMount, MountBuilder};
-use std::fmt::Write as fmtWrite;
 use std::{
     env,
     io::{self, BufWriter},
+    str::FromStr,
+};
+use std::{
+    fmt::Write as fmtWrite,
+    net::{IpAddr, Ipv4Addr},
 };
 use std::{
     fs::{self, File},
@@ -97,9 +102,17 @@ pub struct ContainerRunner {
     root_path: PathBuf,
     container_id: String,
     volumes: Option<Vec<String>>,
+    ip: Option<IpAddr>,
 }
 
 impl ContainerRunner {
+    pub fn ip(&self) -> Option<IpAddr> {
+        self.ip
+    }
+    pub fn id(&self) -> String {
+        self.container_id
+    }
+
     // for now just for compose
     pub fn from_spec(mut spec: ContainerSpec, root_path: Option<PathBuf>) -> Result<Self> {
         let container_id = spec.name.clone();
@@ -123,6 +136,7 @@ impl ContainerRunner {
                 None => rootpath::determine(None)?,
             },
             volumes: None,
+            ip: None,
         })
     }
 
@@ -154,6 +168,7 @@ impl ContainerRunner {
             config: None,
             container_id,
             volumes,
+            ip: None,
         })
     }
 
@@ -174,6 +189,7 @@ impl ContainerRunner {
                 None => rootpath::determine(None)?,
             },
             volumes: None,
+            ip: None,
         })
     }
 
@@ -402,7 +418,7 @@ impl ContainerRunner {
         Ok(CreateContainerResponse { container_id })
     }
 
-    pub fn setup_container_network(&self) -> Result<()> {
+    pub fn setup_container_network(&self) -> Result<JsonValue> {
         // single container status
         if self.determine_single_status() {
             setup_network_conf()?;
@@ -419,8 +435,7 @@ impl ContainerRunner {
             format!("{container_pid}"),
             format!("/proc/{container_pid}/ns/net"),
         )
-        .map_err(|e| anyhow::anyhow!("Failed to add CNI network: {}", e))?;
-        Ok(())
+        .map_err(|e| anyhow::anyhow!("Failed to add CNI network: {}", e))
     }
 
     pub fn load_container(&self) -> Result<Container, LibcontainerError> {
@@ -436,7 +451,19 @@ impl ContainerRunner {
             return self.create();
         }
         // setup the network
-        self.setup_container_network()?;
+        let net_res = self.setup_container_network()?;
+
+        // Currently save container's ip as Ipv4 and collect the first IP(A container can have multible IP addrs)
+        let ip = net_res["ips"][0]["address"]
+            .clone()
+            .as_str()
+            .unwrap_or_default();
+        self.ip = Some(IpAddr::V4(Ipv4Addr::from_str(ip).map_err(|e| {
+            anyhow!(
+                "[container {}] failed to parse container's ip address {e}",
+                self.container_id
+            )
+        })?));
 
         match id {
             None => {
