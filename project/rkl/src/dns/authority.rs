@@ -1,4 +1,11 @@
+#[allow(unused)]
 use std::{collections::HashMap, str::FromStr, sync::Arc};
+use tokio::fs;
+use tokio::sync::Mutex;
+use tokio::{
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    net::UnixListener,
+};
 
 use anyhow::{Result, anyhow};
 use hickory_proto::{
@@ -13,9 +20,16 @@ use hickory_server::{
 };
 use tracing::debug;
 
+use crate::dns::DNSUpdateMsg;
+use crate::dns::UpdateAction::Add;
+use crate::dns::UpdateAction::Delete;
+use crate::dns::UpdateAction::Update;
+
+const DNS_SOCKET_PATH: &str = "/home/erasernoob/test/rkl.sock";
+
 pub struct LocalAuthority {
     pub origin: LowerName,
-    pub store: Arc<dyn RecordStore + Send + Sync>,
+    pub store: Arc<Mutex<dyn RecordStore + Send + Sync>>,
 }
 
 #[async_trait::async_trait]
@@ -80,32 +94,82 @@ impl LocalAuthority {
         let mem_store = MemStore(map);
         Self {
             origin: LowerName::from_str(origin).unwrap(),
-            store: Arc::new(mem_store),
+            store: Arc::new(Mutex::new(mem_store)),
+        }
+    }
+    async fn handle_connection(
+        self: Arc<Self>,
+        mut stream: tokio::net::UnixStream,
+    ) -> anyhow::Result<()> {
+        let mut reader = BufReader::new(&mut stream);
+        let mut buf = String::new();
+        reader.read_line(&mut buf).await?;
+        let msg: DNSUpdateMsg = serde_json::from_str(&buf)?;
+
+        {
+            let mut store = self.store.lock().await;
+            match msg.action {
+                Add => store.add(msg.name, RData::A(A(msg.ip))).await?,
+                Update => store.add(msg.name, RData::A(A(msg.ip))).await?,
+                Delete => store.del(msg.name).await?,
+            };
+        }
+
+        println!("Current: Store: {:#?}", self.store);
+
+        stream.write_all(b"ok\n").await?;
+
+        Ok(())
+    }
+
+    pub async fn start_watch(self: Arc<Self>) -> Result<()> {
+        if fs::metadata(DNS_SOCKET_PATH).await.is_ok() {
+            fs::remove_file(DNS_SOCKET_PATH).await?;
+        }
+        let listener = UnixListener::bind(DNS_SOCKET_PATH)?;
+        println!("🟢 RKL DNS daemon listening on {}", DNS_SOCKET_PATH);
+        loop {
+            let (stream, _) = listener
+                .accept()
+                .await
+                .expect("Unix Listener failed to accept the stream");
+            let this = Arc::clone(&self);
+            tokio::spawn(async move {
+                if let Err(e) = this.handle_connection(stream).await {
+                    eprintln!("Eroor: {e}");
+                }
+            });
         }
     }
 
-    pub async fn start_watch(&self) {}
-
     pub async fn start(
         origin: &str,
-        store: Arc<dyn RecordStore + Send + Sync>,
+        store: Arc<Mutex<dyn RecordStore + Send + Sync>>,
     ) -> Result<Arc<Self>> {
-        // TODO: start daemon
-
-        Ok(Arc::new(Self {
+        let authority = Arc::new(Self {
             origin: LowerName::from_str(origin).unwrap(),
             store,
-        }))
+        });
+        let background = authority.clone();
+        tokio::spawn(async move {
+            if let Err(e) = background.start_watch().await {
+                eprintln!("❌ start_watch failed: {e}");
+            }
+        });
+        Ok(authority)
     }
 }
 
+use std::fmt::Debug;
+
 #[async_trait::async_trait]
-pub trait RecordStore {
+pub trait RecordStore: Debug {
     async fn add(&mut self, name: LowerName, record: RData) -> Result<()>;
     async fn del(&mut self, name: LowerName) -> Result<()>;
     async fn get(&self, name: LowerName) -> Result<RData>;
 }
 
+#[derive(Debug)]
 pub struct MemStore(HashMap<LowerName, RData>);
 
 #[async_trait::async_trait]
