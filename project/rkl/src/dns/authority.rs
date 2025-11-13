@@ -94,7 +94,7 @@ impl Authority for LocalAuthority {
             let mut set = RecordSet::new(name.into(), RecordType::A, 30);
             set.add_rdata(RData::A(A(a)));
 
-            println!("lookup for {name}, get addr {a}");
+            // println!("lookup for {name}, get addr {a}");
 
             return LookupControlFlow::Continue(Ok(LookupRecords::Records {
                 lookup_options,
@@ -132,7 +132,7 @@ impl LocalAuthority {
             };
         }
 
-        println!("Current: Store: {:#?}", self.store);
+        // println!("Current: Store: {:#?}", self.store);
 
         stream.write_all(b"ok\n").await?;
 
@@ -144,7 +144,7 @@ impl LocalAuthority {
             fs::remove_file(DNS_SOCKET_PATH).await?;
         }
         let listener = UnixListener::bind(DNS_SOCKET_PATH)?;
-        println!("🟢 RKL DNS daemon listening on {}", DNS_SOCKET_PATH);
+        println!("RKL DNS daemon listening on {}", DNS_SOCKET_PATH);
         loop {
             let (stream, _) = listener
                 .accept()
@@ -170,7 +170,7 @@ impl LocalAuthority {
         let background = authority.clone();
         tokio::spawn(async move {
             if let Err(e) = background.start_watch().await {
-                eprintln!("❌ start_watch failed: {e}");
+                eprintln!("start_watch failed: {e}");
             }
         });
         Ok(authority)

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
+// use std::thread;
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
@@ -179,7 +180,7 @@ pub struct NetworkManager {
 impl NetworkManager {
     pub fn new(project_name: String) -> Self {
         // TODO: Start local dns server temp
-        runtime_run(dns::run_local_dns(None, vec![])).unwrap();
+        spawn(dns::run_local_dns(None, vec![]));
 
         Self {
             map: HashMap::new(),
@@ -224,7 +225,6 @@ impl NetworkManager {
             fs::create_dir_all(parent)?;
         }
 
-        // write it to
         fs::write(conf_path, serde_json::to_string_pretty(&conf_value)?)?;
 
         Ok(())
@@ -342,9 +342,10 @@ impl NetworkManager {
         let mut buf = String::new();
         let mut reader = BufReader::new(&mut stream);
         reader.read_line(&mut buf).await?;
+        let buf = buf.trim(); // get rid of the "\n" in  "ok\n" 
 
-        if buf != String::from("ok") {
-            return Err(anyhow!("fail to add {srv_name}'s dns record"));
+        if buf != "ok".to_string() {
+            return Err(anyhow!("fail to add {srv_name}'s dns record, got DNS Server response: {buf}"));
         }
         Ok(())
     }
@@ -361,9 +362,9 @@ impl NetworkManager {
     ) -> Result<()> {
         let container_ip = runner
             .ip()
-            .ok_or_else(|| anyhow!("[container {}]Empty IP address for container", runner.id()))?;
+            .ok_or_else(|| anyhow!("[container {}]Empty IP address", runner.id()))?;
         if let IpAddr::V4(ip) = container_ip {
-            runtime_run(async move { self.add_dns_record(srv_name, ip).await })?;
+            block_on(async move { self.add_dns_record(srv_name, ip).await })?;
         } else {
             return Err(anyhow!("Unsupport ipv6 type"));
         }
@@ -372,13 +373,25 @@ impl NetworkManager {
     }
 }
 
-fn runtime_run<F, T>(f: F) -> T
+use lazy_static::lazy_static;
+
+lazy_static! {
+    static ref RUNTIME: tokio::runtime::Runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+}
+fn block_on<F, T>(f: F) -> T
 where
     F: Future<Output = T>,
 {
-    tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(f)
+    RUNTIME.block_on(f)
+}
+
+fn spawn<F, T>(f: F) -> tokio::task::JoinHandle<T>
+where
+    F: Future<Output = T> + Send + 'static,
+    T: Send + 'static,
+{
+    RUNTIME.spawn(f)
 }
