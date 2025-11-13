@@ -1,15 +1,27 @@
 use std::collections::HashMap;
 use std::fs;
+use std::thread;
+use std::time::Duration;
 // use std::thread;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
+use std::path::Path;
 use std::path::PathBuf;
+use std::process::id;
 use std::str::FromStr;
+use sysinfo::Pid;
+use sysinfo::System;
+use tokio::net::UdpSocket;
+use tracing::Level;
+use tracing_subscriber::fmt::format::FmtSpan;
 
 use crate::commands::compose::spec::NetworkDriver::Bridge;
 use crate::commands::compose::spec::NetworkDriver::Host;
 use crate::commands::compose::spec::NetworkDriver::Overlay;
 use crate::dns;
+use crate::dns::run_local_dns;
 
 use cni_plugin::ip_range::IpRange;
 use hickory_proto::rr::LowerName;
@@ -17,10 +29,15 @@ use ipnetwork::IpNetwork;
 use ipnetwork::Ipv4Network;
 use libipam::config::IPAMConfig;
 use libipam::range_set::RangeSet;
+use nix::unistd::ForkResult;
+use nix::unistd::getpid;
+use nix::unistd::fork;
+use nix::unistd::setsid;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
 use tokio::net::UnixStream;
+use tokio::runtime::Runtime;
 
 use crate::commands::compose::spec::ComposeSpec;
 use crate::commands::compose::spec::NetworkSpec;
@@ -177,10 +194,61 @@ pub struct NetworkManager {
     project_name: String,
 }
 
+use tracing::{info, subscriber::set_global_default};
+use tracing_subscriber::fmt::{self, Subscriber};
+use tokio::process::Command;
+
+fn create_local_subscriber(log_file: &str) -> impl tracing::Subscriber {
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_file)
+        .unwrap();
+    fmt::fmt()
+        .with_max_level(Level::TRACE)
+        .with_writer(file)
+        .finish()
+}
+
 impl NetworkManager {
     pub fn new(project_name: String) -> Self {
-        // TODO: Start local dns server temp
-        spawn(dns::run_local_dns(None, vec![]));
+        // TODO: It is definitly wrong to del and fork the dns server process here
+        match unsafe { fork().expect("failed to fork dns server child process") } {
+            ForkResult::Parent { child } => {
+                println!("Forked DNS server in child PID: {}", child);
+            }
+            ForkResult::Child => {
+                let child = getpid();
+                let pid_file = "/var/run/rkl_dns.pid";
+                if Path::new(pid_file).exists() {
+                    if let Ok(pid_str) = fs::read_to_string(pid_file) {
+                        if let Ok(pid) = pid_str.trim().parse::<u32>() {
+                            let mut sys = System::new_all();
+                            sys.refresh_processes();
+                            if let Some(proc) = sys.process(Pid::from_u32(pid)) {
+                                println!("KILL PID: {}", pid);
+                                let _ = proc.kill();
+                                thread::sleep(Duration::from_secs(3)); 
+                            }
+                        }
+                    }
+                    let _ = fs::remove_file(pid_file);
+                }
+    
+                let mut file = fs::File::create(pid_file).unwrap();
+                writeln!(file, "{}", child).unwrap();
+
+                setsid().expect("Failed to setsid");
+                let sub = create_local_subscriber("child.log");
+                let _guard = tracing::subscriber::set_default(sub); 
+
+                let rt = Runtime::new().unwrap();
+                rt.block_on(async {
+                    run_local_dns(Some(53), vec![]).await.unwrap();
+                });
+                std::process::exit(0);
+            }
+        };
 
         Self {
             map: HashMap::new(),
