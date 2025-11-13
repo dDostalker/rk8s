@@ -3,6 +3,7 @@ mod server;
 
 use std::net::{Ipv4Addr, SocketAddr};
 use std::os::unix::net::UnixListener;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use futures::FutureExt;
@@ -56,13 +57,17 @@ pub async fn run_local_dns(port: u16) -> anyhow::Result<()> {
     let mut catalog = Catalog::new();
 
     let local_authority: Arc<dyn AuthorityObject> = local_authority;
-    catalog.upsert(root_lowername.clone(), vec![local_authority]);
-
     let forwarder = ForwardAuthority::builder(TokioConnectionProvider::default())
         .map_err(|e| anyhow::anyhow!(e))?
         .build()
         .map_err(|e| anyhow::anyhow!(e))?;
-    catalog.upsert(root_lowername, vec![Arc::new(forwarder)]);
+
+    catalog.upsert(
+        LowerName::from_str("rkl.local.").unwrap(),
+        vec![local_authority],
+    );
+
+    catalog.upsert(root_lowername.clone(), vec![Arc::new(forwarder)]);
 
     let mut server = ServerFuture::new(catalog);
     let addr: SocketAddr = format!("0.0.0.0:{}", port).parse()?;
@@ -81,6 +86,6 @@ mod test {
 
     #[tokio::test]
     async fn test_run_local_dns_sever() {
-        run_local_dns(5300).await.unwrap_or_default()
+        run_local_dns(5300).await.unwrap()
     }
 }

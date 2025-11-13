@@ -110,7 +110,7 @@ impl ContainerRunner {
         self.ip
     }
     pub fn id(&self) -> String {
-        self.container_id
+        self.container_id.clone()
     }
 
     // for now just for compose
@@ -454,8 +454,9 @@ impl ContainerRunner {
         let net_res = self.setup_container_network()?;
 
         // Currently save container's ip as Ipv4 and collect the first IP(A container can have multible IP addrs)
-        let ip = net_res["ips"][0]["address"]
-            .clone()
+        let binding = net_res["ips"][0]["address"]
+            .clone();
+        let ip = binding
             .as_str()
             .unwrap_or_default();
         self.ip = Some(IpAddr::V4(Ipv4Addr::from_str(ip).map_err(|e| {

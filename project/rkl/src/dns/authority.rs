@@ -81,10 +81,27 @@ impl Authority for LocalAuthority {
     async fn lookup(
         &self,
         name: &LowerName,
-        rtype: RecordType,
+        _rtype: RecordType,
         lookup_options: LookupOptions,
     ) -> LookupControlFlow<Self::Lookup> {
-        return LookupControlFlow::Continue(Ok(LookupRecords::Empty));
+        // Only support A type
+        let store = self.store.lock().await;
+        println!("{:?}", store);
+        store.get(name).await.unwrap();
+
+        if let Ok(data) = store.get(name).await {
+            let a = data.into_a().unwrap().0;
+            let mut set = RecordSet::new(name.into(), RecordType::A, 30);
+            set.add_rdata(RData::A(A(a)));
+
+            println!("lookup for {name}, get addr {a}");
+
+            return LookupControlFlow::Continue(Ok(LookupRecords::Records {
+                lookup_options,
+                records: Arc::new(set),
+            }));
+        }
+        return LookupControlFlow::Skip;
     }
 }
 
@@ -109,9 +126,9 @@ impl LocalAuthority {
         {
             let mut store = self.store.lock().await;
             match msg.action {
-                Add => store.add(msg.name, RData::A(A(msg.ip))).await?,
-                Update => store.add(msg.name, RData::A(A(msg.ip))).await?,
-                Delete => store.del(msg.name).await?,
+                Add => store.add(&msg.name, RData::A(A(msg.ip))).await?,
+                Update => store.add(&msg.name, RData::A(A(msg.ip))).await?,
+                Delete => store.del(&msg.name).await?,
             };
         }
 
@@ -164,9 +181,9 @@ use std::fmt::Debug;
 
 #[async_trait::async_trait]
 pub trait RecordStore: Debug {
-    async fn add(&mut self, name: LowerName, record: RData) -> Result<()>;
-    async fn del(&mut self, name: LowerName) -> Result<()>;
-    async fn get(&self, name: LowerName) -> Result<RData>;
+    async fn add(&mut self, name: &LowerName, record: RData) -> Result<()>;
+    async fn del(&mut self, name: &LowerName) -> Result<()>;
+    async fn get(&self, name: &LowerName) -> Result<RData>;
 }
 
 #[derive(Debug)]
@@ -174,17 +191,17 @@ pub struct MemStore(HashMap<LowerName, RData>);
 
 #[async_trait::async_trait]
 impl RecordStore for MemStore {
-    async fn add(&mut self, name: LowerName, record: RData) -> Result<()> {
+    async fn add(&mut self, name: &LowerName, record: RData) -> Result<()> {
         self.0.insert(name.clone(), record.clone());
         Ok(())
     }
-    async fn del(&mut self, name: LowerName) -> Result<()> {
-        self.0.remove(&name);
+    async fn del(&mut self, name: &LowerName) -> Result<()> {
+        self.0.remove(name);
         Ok(())
     }
-    async fn get(&self, name: LowerName) -> Result<RData> {
+    async fn get(&self, name: &LowerName) -> Result<RData> {
         self.0
-            .get(&name)
+            .get(name)
             .ok_or_else(|| anyhow!("record not found"))
             .cloned()
     }
