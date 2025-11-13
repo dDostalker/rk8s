@@ -344,8 +344,10 @@ impl NetworkManager {
         reader.read_line(&mut buf).await?;
         let buf = buf.trim(); // get rid of the "\n" in  "ok\n" 
 
-        if buf != "ok".to_string() {
-            return Err(anyhow!("fail to add {srv_name}'s dns record, got DNS Server response: {buf}"));
+        if buf != "ok" {
+            return Err(anyhow!(
+                "fail to add {srv_name}'s dns record, got DNS Server response: {buf}"
+            ));
         }
         Ok(())
     }
