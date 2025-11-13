@@ -20,12 +20,12 @@ use hickory_server::{
 };
 use tracing::debug;
 
-use crate::dns::DNSUpdateMsg;
+use crate::dns::DNSUpdateMessage;
 use crate::dns::UpdateAction::Add;
 use crate::dns::UpdateAction::Delete;
 use crate::dns::UpdateAction::Update;
 
-const DNS_SOCKET_PATH: &str = "/home/erasernoob/test/rkl.sock";
+pub const DNS_SOCKET_PATH: &str = "/home/erasernoob/test/rkl.sock";
 
 pub struct LocalAuthority {
     pub origin: LowerName,
@@ -106,7 +106,7 @@ impl Authority for LocalAuthority {
 }
 
 impl LocalAuthority {
-    pub fn from_mem(origin: &str) -> Self {
+    pub fn _from_mem(origin: &str) -> Self {
         let map: HashMap<LowerName, RData> = HashMap::new();
         let mem_store = MemStore(map);
         Self {
@@ -121,7 +121,7 @@ impl LocalAuthority {
         let mut reader = BufReader::new(&mut stream);
         let mut buf = String::new();
         reader.read_line(&mut buf).await?;
-        let msg: DNSUpdateMsg = serde_json::from_str(&buf)?;
+        let msg: DNSUpdateMessage = serde_json::from_str(&buf)?;
 
         {
             let mut store = self.store.lock().await;
@@ -176,7 +176,6 @@ impl LocalAuthority {
         Ok(authority)
     }
 }
-
 use std::fmt::Debug;
 
 #[async_trait::async_trait]

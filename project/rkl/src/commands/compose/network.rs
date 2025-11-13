@@ -3,22 +3,29 @@ use std::fs;
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use crate::commands::compose::spec::NetworkDriver::Bridge;
 use crate::commands::compose::spec::NetworkDriver::Host;
 use crate::commands::compose::spec::NetworkDriver::Overlay;
+use crate::dns;
 
 use cni_plugin::ip_range::IpRange;
+use hickory_proto::rr::LowerName;
 use ipnetwork::IpNetwork;
 use ipnetwork::Ipv4Network;
 use libipam::config::IPAMConfig;
 use libipam::range_set::RangeSet;
+use tokio::io::AsyncBufReadExt;
+use tokio::io::AsyncWriteExt;
+use tokio::io::BufReader;
+use tokio::net::UnixStream;
 
 use crate::commands::compose::spec::ComposeSpec;
 use crate::commands::compose::spec::NetworkSpec;
 use crate::commands::compose::spec::ServiceSpec;
 use crate::commands::container::ContainerRunner;
-use anyhow::Ok;
+use crate::dns::authority::DNS_SOCKET_PATH;
 use anyhow::Result;
 use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
@@ -171,6 +178,9 @@ pub struct NetworkManager {
 
 impl NetworkManager {
     pub fn new(project_name: String) -> Self {
+        // TODO: Start local dns server temp
+        runtime_run(dns::run_local_dns(None, vec![])).unwrap();
+
         Self {
             map: HashMap::new(),
             service_mapping: HashMap::new(),
@@ -311,16 +321,64 @@ impl NetworkManager {
         Ok(())
     }
 
+    async fn add_dns_record(&self, srv_name: &str, ip: Ipv4Addr) -> Result<()> {
+        let mut stream = UnixStream::connect(DNS_SOCKET_PATH)
+            .await
+            .map_err(|e| anyhow!("Fatal error: failed to connect local DNS SOCKET: {e}"))?;
+
+        let domain = dns::parse_service_to_domain(srv_name, None);
+
+        let msg = dns::DNSUpdateMessage {
+            action: dns::UpdateAction::Add,
+            name: LowerName::from_str(&domain).unwrap(),
+            ip,
+        };
+
+        let msg_byte = serde_json::to_vec(&msg).unwrap();
+
+        stream.write_all(&msg_byte).await?;
+        stream.write_all(b"\n").await?;
+
+        let mut buf = String::new();
+        let mut reader = BufReader::new(&mut stream);
+        reader.read_line(&mut buf).await?;
+
+        if buf != String::from("ok") {
+            return Err(anyhow!("fail to add {srv_name}'s dns record"));
+        }
+        Ok(())
+    }
+
     /// This function act as a hook func, doese network-related stuff after container started
     /// Currently, it will do the following things:
     ///
-    /// 1. Record the container's IP to storage(target file)
+    /// 1. Put the Container's IP to Local daemon dns server(use sock)
     ///
-    pub(crate) fn after_container_started(&self, runner: ContainerRunner) -> Result<()> {
+    pub(crate) fn after_container_started(
+        &self,
+        srv_name: &str,
+        runner: ContainerRunner,
+    ) -> Result<()> {
         let container_ip = runner
             .ip()
             .ok_or_else(|| anyhow!("[container {}]Empty IP address for container", runner.id()))?;
+        if let IpAddr::V4(ip) = container_ip {
+            runtime_run(async move { self.add_dns_record(srv_name, ip).await })?;
+        } else {
+            return Err(anyhow!("Unsupport ipv6 type"));
+        }
 
         Ok(())
     }
+}
+
+fn runtime_run<F, T>(f: F) -> T
+where
+    F: Future<Output = T>,
+{
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(f)
 }

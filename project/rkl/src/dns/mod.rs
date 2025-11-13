@@ -1,12 +1,10 @@
-mod authority;
-mod server;
+pub mod authority;
+pub mod server;
 
 use std::net::{Ipv4Addr, SocketAddr};
-use std::os::unix::net::UnixListener;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use futures::FutureExt;
 use hickory_proto::rr::{LowerName, Name};
 use hickory_resolver::name_server::TokioConnectionProvider;
 use hickory_server::authority::{AuthorityObject, Catalog};
@@ -14,42 +12,48 @@ use hickory_server::server::ServerFuture;
 // use std::str::FromStr;
 
 use hickory_server::store::forwarder::ForwardAuthority;
-use rkl::daemon::sync_loop::Event;
-use serde::Deserialize;
+// use rkl::daemon::sync_loop::Event;
+use serde::{Deserialize, Serialize};
 use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
-use tokio::time::sleep;
 use tracing::info;
 
 use crate::dns::authority::{LocalAuthority, MemStore};
 
-#[derive(Debug, Deserialize)]
+pub const LOCAL_AUTHORITY_DOMAIN: &str = "rkl.local.";
+pub const LOCAL_NAMESERVER: &str = "127.0.0.11";
+
+#[derive(Debug, Deserialize, Serialize)]
 pub enum UpdateAction {
     Add,
     Update,
     Delete,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct DNSUpdateMsg {
+#[derive(Debug, Deserialize, Serialize)]
+pub struct DNSUpdateMessage {
     pub action: UpdateAction,
     pub name: LowerName,
     pub ip: Ipv4Addr,
 }
 
-struct StandaloneEvent;
-
-impl Event<()> for StandaloneEvent {
-    fn listen() -> std::pin::Pin<Box<dyn Future<Output = ()> + Send>> {
-        async {
-            let _ = sleep(core::time::Duration::from_secs(1));
-        }
-        .boxed()
+pub fn parse_service_to_domain(srv_name: &str, domain: Option<&str>) -> String {
+    match domain {
+        Some(network_name) => format!("{srv_name}.{network_name}"),
+        None => format!("{srv_name}.{LOCAL_AUTHORITY_DOMAIN}"),
     }
 }
 
-pub async fn run_local_dns(port: u16) -> anyhow::Result<()> {
-    // TODO: Here directly use root domain name for our local authority
+/// Start the local DNS Server daemon
+///
+/// args:
+/// - port: the port that server listen (default is 53)
+/// - domains: the domains that authority needs to handle LIKE "rkl.local." (for rkl compose each domain is the network name)
+///
+/// Initialize both local-autority and forward-authority add it to catalog
+pub async fn run_local_dns(port: Option<u16>, domains: Vec<LowerName>) -> anyhow::Result<()> {
+    let port = port.unwrap_or(53);
+
     let root_lowername = LowerName::from(Name::root());
     let mem_store = Arc::new(Mutex::new(MemStore::new()));
     let local_authority = LocalAuthority::start(&Name::root().to_string(), mem_store).await?;
@@ -63,14 +67,18 @@ pub async fn run_local_dns(port: u16) -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!(e))?;
 
     catalog.upsert(
-        LowerName::from_str("rkl.local.").unwrap(),
-        vec![local_authority],
+        LowerName::from_str(LOCAL_AUTHORITY_DOMAIN).unwrap(),
+        vec![local_authority.clone()],
     );
+
+    for domain in domains {
+        catalog.upsert(domain, vec![local_authority.clone()]);
+    }
 
     catalog.upsert(root_lowername.clone(), vec![Arc::new(forwarder)]);
 
     let mut server = ServerFuture::new(catalog);
-    let addr: SocketAddr = format!("0.0.0.0:{}", port).parse()?;
+    let addr: SocketAddr = format!("{LOCAL_NAMESERVER}:{}", port).parse()?;
     let udp_socket = UdpSocket::bind(addr).await?;
     server.register_socket(udp_socket);
 
@@ -86,6 +94,6 @@ mod test {
 
     #[tokio::test]
     async fn test_run_local_dns_sever() {
-        run_local_dns(5300).await.unwrap()
+        run_local_dns(Some(5300), vec![]).await.unwrap()
     }
 }
