@@ -457,14 +457,16 @@ impl ContainerRunner {
         let net_res = self.setup_container_network()?;
 
         // Currently save container's ip as Ipv4 and collect the first IP(A container can have multible IP addrs)
-        let binding = net_res["ips"][0]["address"]
-            .clone();
-        let ip_with_cidr = binding
-            .as_str()
-            .unwrap_or_default();
-        debug!("[container {}] Get container's ip_with_cidr: {ip_with_cidr}", self.container_id);
+        let binding = net_res["ips"][0]["address"].clone();
+        let ip_with_cidr = binding.as_str().unwrap_or_default();
+        debug!(
+            "[container {}] Get container's ip_with_cidr: {ip_with_cidr}",
+            self.container_id
+        );
         let ip_str = ip_with_cidr.split('/').next().unwrap_or(ip_with_cidr);
-        let ip_addr: IpAddr = ip_str.parse().map_err(|_| anyhow!("invalid IP address: {ip_with_cidr}"))?;
+        let ip_addr: IpAddr = ip_str
+            .parse()
+            .map_err(|_| anyhow!("invalid IP address: {ip_with_cidr}"))?;
         let pure_ip = ip_addr.to_string(); // "10.20.0.13"
         self.ip = Some(IpAddr::V4(Ipv4Addr::from_str(&pure_ip).map_err(|e| {
             anyhow!(

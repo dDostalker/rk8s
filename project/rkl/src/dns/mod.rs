@@ -43,7 +43,6 @@ pub fn parse_service_to_domain(srv_name: &str, domain: Option<&str>) -> String {
     }
 }
 
-
 /// Start the local DNS Server daemon
 ///
 /// args:

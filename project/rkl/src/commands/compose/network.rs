@@ -13,9 +13,8 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use sysinfo::Pid;
 use sysinfo::System;
-use tracing::Level;
-use tracing_subscriber::{fmt, EnvFilter};
 use tracing_appender::non_blocking;
+use tracing_subscriber::EnvFilter;
 
 use crate::commands::compose::spec::NetworkDriver::Bridge;
 use crate::commands::compose::spec::NetworkDriver::Host;
@@ -142,7 +141,6 @@ impl CliNetworkConfig {
     }
 }
 
-
 impl Default for CliNetworkConfig {
     fn default() -> Self {
         // Default subnet-addr for rkl container management
@@ -195,18 +193,6 @@ pub struct NetworkManager {
     /// if there is no network definition then just create a default network
     is_default: bool,
     project_name: String,
-}
-
-fn create_local_subscriber(log_file: &str) -> impl tracing::Subscriber {
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_file)
-        .unwrap();
-    fmt::fmt()
-        .with_max_level(Level::TRACE)
-        .with_writer(file)
-        .finish()
 }
 
 impl NetworkManager {
@@ -423,7 +409,7 @@ impl NetworkManager {
 
                 tracing_subscriber::fmt()
                     .with_writer(non_blocking)
-                    .with_env_filter(EnvFilter::new("tracing"))   
+                    .with_env_filter(EnvFilter::new("tracing"))
                     .init();
                 // let sub = create_local_subscriber("child.log");
                 // let _guard = tracing::subscriber::set_default(sub);
@@ -441,15 +427,15 @@ impl NetworkManager {
     pub fn clean_up(&self) -> Result<()> {
         let pid_file = "/var/run/rkl_dns.pid";
         if Path::new(pid_file).exists() {
-            if let Ok(pid_str) = fs::read_to_string(pid_file) {
-                if let Ok(pid) = pid_str.trim().parse::<u32>() {
-                    let mut sys = System::new_all();
-                    sys.refresh_processes();
-                    if let Some(proc) = sys.process(Pid::from_u32(pid)) {
-                        println!("KILL PID: {}", pid);
-                        let _ = proc.kill();
-                        thread::sleep(Duration::from_secs(3));
-                    }
+            if let Ok(pid_str) = fs::read_to_string(pid_file)
+                && let Ok(pid) = pid_str.trim().parse::<u32>()
+            {
+                let mut sys = System::new_all();
+                sys.refresh_processes();
+                if let Some(proc) = sys.process(Pid::from_u32(pid)) {
+                    println!("KILL PID: {}", pid);
+                    let _ = proc.kill();
+                    thread::sleep(Duration::from_secs(3));
                 }
             }
             let _ = fs::remove_file(pid_file);
