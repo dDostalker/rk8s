@@ -3,19 +3,19 @@ use std::fs;
 use std::thread;
 use std::time::Duration;
 // use std::thread;
-use std::fs::OpenOptions;
+// use std::fs::OpenOptions;
 use std::io::Write;
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::path::Path;
 use std::path::PathBuf;
-use std::process::id;
+// use std::process::id;
 use std::str::FromStr;
 use sysinfo::Pid;
 use sysinfo::System;
-use tokio::net::UdpSocket;
 use tracing::Level;
-use tracing_subscriber::fmt::format::FmtSpan;
+use tracing_subscriber::{fmt, EnvFilter};
+use tracing_appender::non_blocking;
 
 use crate::commands::compose::spec::NetworkDriver::Bridge;
 use crate::commands::compose::spec::NetworkDriver::Host;
@@ -30,8 +30,8 @@ use ipnetwork::Ipv4Network;
 use libipam::config::IPAMConfig;
 use libipam::range_set::RangeSet;
 use nix::unistd::ForkResult;
-use nix::unistd::getpid;
 use nix::unistd::fork;
+use nix::unistd::getpid;
 use nix::unistd::setsid;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncWriteExt;
@@ -55,6 +55,7 @@ pub const BRIDGE_PLUGIN_NAME: &str = "libbridge";
 pub const BRIDGE_CONF: &str = "rkl-standalone-bridge.conf";
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CliNetworkConfig {
     /// default is 1.0.0
     #[serde(default)]
@@ -141,11 +142,13 @@ impl CliNetworkConfig {
     }
 }
 
+
 impl Default for CliNetworkConfig {
     fn default() -> Self {
         // Default subnet-addr for rkl container management
-        let subnet_addr = Ipv4Addr::new(10, 10, 0, 0);
-        let getway_addr = Ipv4Addr::new(10, 10, 2, 1);
+        // 172.17.0.0/16
+        let subnet_addr = Ipv4Addr::new(172, 17, 0, 0);
+        let getway_addr = Ipv4Addr::new(172, 17, 0, 1);
 
         let ip_range = IpRange {
             subnet: ipnetwork::IpNetwork::V4(Ipv4Network::new(subnet_addr, 16).unwrap()),
@@ -194,10 +197,6 @@ pub struct NetworkManager {
     project_name: String,
 }
 
-use tracing::{info, subscriber::set_global_default};
-use tracing_subscriber::fmt::{self, Subscriber};
-use tokio::process::Command;
-
 fn create_local_subscriber(log_file: &str) -> impl tracing::Subscriber {
     let file = std::fs::OpenOptions::new()
         .create(true)
@@ -212,44 +211,6 @@ fn create_local_subscriber(log_file: &str) -> impl tracing::Subscriber {
 
 impl NetworkManager {
     pub fn new(project_name: String) -> Self {
-        // TODO: It is definitly wrong to del and fork the dns server process here
-        match unsafe { fork().expect("failed to fork dns server child process") } {
-            ForkResult::Parent { child } => {
-                println!("Forked DNS server in child PID: {}", child);
-            }
-            ForkResult::Child => {
-                let child = getpid();
-                let pid_file = "/var/run/rkl_dns.pid";
-                if Path::new(pid_file).exists() {
-                    if let Ok(pid_str) = fs::read_to_string(pid_file) {
-                        if let Ok(pid) = pid_str.trim().parse::<u32>() {
-                            let mut sys = System::new_all();
-                            sys.refresh_processes();
-                            if let Some(proc) = sys.process(Pid::from_u32(pid)) {
-                                println!("KILL PID: {}", pid);
-                                let _ = proc.kill();
-                                thread::sleep(Duration::from_secs(3)); 
-                            }
-                        }
-                    }
-                    let _ = fs::remove_file(pid_file);
-                }
-    
-                let mut file = fs::File::create(pid_file).unwrap();
-                writeln!(file, "{}", child).unwrap();
-
-                setsid().expect("Failed to setsid");
-                let sub = create_local_subscriber("child.log");
-                let _guard = tracing::subscriber::set_default(sub); 
-
-                let rt = Runtime::new().unwrap();
-                rt.block_on(async {
-                    run_local_dns(Some(53), vec![]).await.unwrap();
-                });
-                std::process::exit(0);
-            }
-        };
-
         Self {
             map: HashMap::new(),
             service_mapping: HashMap::new(),
@@ -273,8 +234,8 @@ impl NetworkManager {
             )
         })?;
 
-        let subnet_addr = Ipv4Addr::new(10, 20, 0, 0);
-        let gateway_addr = Ipv4Addr::new(10, 20, 0, 1);
+        let subnet_addr = Ipv4Addr::new(172, 17, 0, 0);
+        let gateway_addr = Ipv4Addr::new(172, 17, 0, 1);
 
         let conf = CliNetworkConfig::from_subnet_gateway(
             network_name,
@@ -310,7 +271,9 @@ impl NetworkManager {
         self.validate(spec)?;
 
         // allocate the bridge interface
-        self.allocate_interface()
+        self.allocate_interface()?;
+
+        self.startup_dns_server()
     }
 
     /// validate the correctness and initialize  the service_mapping
@@ -441,6 +404,59 @@ impl NetworkManager {
 
         Ok(())
     }
+
+    pub fn startup_dns_server(&self) -> Result<()> {
+        let pid_file = "/var/run/rkl_dns.pid";
+        match unsafe { fork().expect("failed to fork dns server child process") } {
+            ForkResult::Parent { child } => {
+                println!("Forked DNS server in child PID: {}", child);
+            }
+            ForkResult::Child => {
+                let child = getpid();
+
+                let mut file = fs::File::create(pid_file).unwrap();
+                writeln!(file, "{}", child).unwrap();
+
+                setsid().expect("Failed to setsid");
+                let file_appender = tracing_appender::rolling::never(".", "child.log");
+                let (non_blocking, _guard) = non_blocking(file_appender);
+
+                tracing_subscriber::fmt()
+                    .with_writer(non_blocking)
+                    .with_env_filter(EnvFilter::new("tracing"))   
+                    .init();
+                // let sub = create_local_subscriber("child.log");
+                // let _guard = tracing::subscriber::set_default(sub);
+
+                let rt = Runtime::new().unwrap();
+                rt.block_on(async {
+                    run_local_dns(Some(53), vec![]).await.unwrap();
+                });
+                std::process::exit(0);
+            }
+        };
+        Ok(())
+    }
+
+    pub fn clean_up(&self) -> Result<()> {
+        let pid_file = "/var/run/rkl_dns.pid";
+        if Path::new(pid_file).exists() {
+            if let Ok(pid_str) = fs::read_to_string(pid_file) {
+                if let Ok(pid) = pid_str.trim().parse::<u32>() {
+                    let mut sys = System::new_all();
+                    sys.refresh_processes();
+                    if let Some(proc) = sys.process(Pid::from_u32(pid)) {
+                        println!("KILL PID: {}", pid);
+                        let _ = proc.kill();
+                        thread::sleep(Duration::from_secs(3));
+                    }
+                }
+            }
+            let _ = fs::remove_file(pid_file);
+        }
+
+        Ok(())
+    }
 }
 
 use lazy_static::lazy_static;
@@ -458,6 +474,7 @@ where
     RUNTIME.block_on(f)
 }
 
+#[allow(unused)]
 fn spawn<F, T>(f: F) -> tokio::task::JoinHandle<T>
 where
     F: Future<Output = T> + Send + 'static,

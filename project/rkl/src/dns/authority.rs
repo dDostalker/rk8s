@@ -87,8 +87,6 @@ impl Authority for LocalAuthority {
         // Only support A type
         let store = self.store.lock().await;
         debug!("{:?}", store);
-        store.get(name).await.unwrap();
-
         if let Ok(data) = store.get(name).await {
             let a = data.into_a().unwrap().0;
             let mut set = RecordSet::new(name.into(), RecordType::A, 30);

@@ -1,9 +1,7 @@
 pub mod authority;
 pub mod server;
 
-use std::fs;
 use std::net::{Ipv4Addr, SocketAddr};
-use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -12,8 +10,6 @@ use hickory_resolver::name_server::TokioConnectionProvider;
 use hickory_server::authority::{AuthorityObject, Catalog};
 use hickory_server::server::ServerFuture;
 // use std::str::FromStr;
-use sysinfo::{Pid, System};
-
 use hickory_server::store::forwarder::ForwardAuthority;
 // use rkl::daemon::sync_loop::Event;
 use serde::{Deserialize, Serialize};
@@ -23,8 +19,8 @@ use tracing::info;
 
 use crate::dns::authority::{LocalAuthority, MemStore};
 
-pub const LOCAL_AUTHORITY_DOMAIN: &str = "rkl.local.";
-pub const LOCAL_NAMESERVER: &str = "127.0.0.11";
+pub const LOCAL_AUTHORITY_DOMAIN: &str = "rkl.internal.";
+pub const LOCAL_NAMESERVER: &str = "172.17.0.1";
 
 #[derive(Debug, Deserialize, Serialize)]
 pub enum UpdateAction {
@@ -47,22 +43,6 @@ pub fn parse_service_to_domain(srv_name: &str, domain: Option<&str>) -> String {
     }
 }
 
-pub fn handle_process() {
-    let pid_file = "/var/run/rkl_dns.pid";
-    if Path::new(pid_file).exists() {
-        if let Ok(pid_str) = fs::read_to_string(pid_file) {
-            if let Ok(pid) = pid_str.trim().parse::<u32>() {
-                let mut sys = System::new_all();
-                sys.refresh_all();
-                if let Some(proc) = sys.process(Pid::from_u32(pid)) {
-                    println!("KILL PID: {}", pid);
-                    let _ = proc.kill();
-                }
-            }
-        }
-        let _ = fs::remove_file(pid_file);
-    }
-}
 
 /// Start the local DNS Server daemon
 ///
