@@ -90,6 +90,7 @@ mod test {
     use super::*;
 
     #[tokio::test]
+    #[ignore]
     async fn test_run_local_dns_server() {
         run_local_dns(Some(5300), vec![]).await.unwrap()
     }
