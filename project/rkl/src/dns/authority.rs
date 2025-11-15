@@ -25,7 +25,7 @@ use crate::dns::UpdateAction::Add;
 use crate::dns::UpdateAction::Delete;
 use crate::dns::UpdateAction::Update;
 
-pub const DNS_SOCKET_PATH: &str = "/home/erasernoob/test/rkl.sock";
+pub const DNS_SOCKET_PATH: &str = "/var/run/rkl_dns.sock";
 
 pub struct LocalAuthority {
     pub origin: LowerName,

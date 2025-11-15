@@ -29,12 +29,8 @@ use oci_spec::runtime::{Mount as OciMount, MountBuilder};
 use std::{
     env,
     io::{self, BufWriter},
-    str::FromStr,
 };
-use std::{
-    fmt::Write as fmtWrite,
-    net::{IpAddr, Ipv4Addr},
-};
+use std::{fmt::Write as fmtWrite, net::IpAddr};
 use std::{
     fs::{self, File},
     io::Read,
@@ -454,26 +450,8 @@ impl ContainerRunner {
             return self.create();
         }
         // setup the network
-        let net_res = self.setup_container_network()?;
-
-        // Currently save container's ip as Ipv4 and collect the first IP(A container can have multible IP addrs)
-        let binding = net_res["ips"][0]["address"].clone();
-        let ip_with_cidr = binding.as_str().unwrap_or_default();
-        debug!(
-            "[container {}] Get container's ip_with_cidr: {ip_with_cidr}",
-            self.container_id
-        );
-        let ip_str = ip_with_cidr.split('/').next().unwrap_or(ip_with_cidr);
-        let ip_addr: IpAddr = ip_str
-            .parse()
-            .map_err(|_| anyhow!("invalid IP address: {ip_with_cidr}"))?;
-        let pure_ip = ip_addr.to_string(); // "10.20.0.13"
-        self.ip = Some(IpAddr::V4(Ipv4Addr::from_str(&pure_ip).map_err(|e| {
-            anyhow!(
-                "[container {}] failed to parse container's ip address: {e}",
-                self.container_id
-            )
-        })?));
+        let setup_result = self.setup_container_network()?;
+        self.retrieve_container_ip(setup_result)?;
 
         match id {
             None => {
@@ -498,6 +476,43 @@ impl ContainerRunner {
                 Ok(())
             }
         }
+    }
+
+    pub fn retrieve_container_ip(&mut self, setup_result: JsonValue) -> Result<()> {
+        // Currently save container's ip as Ipv4 and collect the first IP(A container can have multiple IP addrs)
+        let ips = setup_result["ips"].clone();
+        if !ips.is_array() {
+            return Err(anyhow!("CNI result missing 'ips' array"));
+        };
+        if ips.is_empty() {
+            return Err(anyhow!(
+                "CNI returned no IP addresses for container {}",
+                self.container_id
+            ));
+        }
+        let binding = ips[0]["address"].clone();
+        let ip_with_cidr = binding.as_str().ok_or_else(|| anyhow!(
+                "[container {}] CNI result missing valid IP address string at ['ips'][0]['address']: {binding:?}",
+                self.container_id
+            ))?;
+        debug!(
+            "[container {}] Get container's ip_with_cidr: {ip_with_cidr}",
+            self.container_id
+        );
+        let ip_str = ip_with_cidr.split('/').next().unwrap_or(ip_with_cidr);
+        let ip_addr: IpAddr = ip_str
+            .parse()
+            .map_err(|_| anyhow!("invalid IP address: {ip_with_cidr}"))?;
+        self.ip = match ip_addr {
+            IpAddr::V4(ipv4) => Some(IpAddr::V4(ipv4)),
+            _ => {
+                return Err(anyhow!(
+                    "[container {}] only IPv4 addresses are supported, got: {ip_with_cidr}",
+                    self.container_id
+                ));
+            }
+        };
+        Ok(())
     }
 
     // due to the compose manager reuse the container manager to uun container

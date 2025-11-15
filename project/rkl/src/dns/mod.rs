@@ -9,9 +9,7 @@ use hickory_proto::rr::{LowerName, Name};
 use hickory_resolver::name_server::TokioConnectionProvider;
 use hickory_server::authority::{AuthorityObject, Catalog};
 use hickory_server::server::ServerFuture;
-// use std::str::FromStr;
 use hickory_server::store::forwarder::ForwardAuthority;
-// use rkl::daemon::sync_loop::Event;
 use serde::{Deserialize, Serialize};
 use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
@@ -49,7 +47,7 @@ pub fn parse_service_to_domain(srv_name: &str, domain: Option<&str>) -> String {
 /// - port: the port that server listen (default is 53)
 /// - domains: the domains that authority needs to handle LIKE "rkl.local." (for rkl compose each domain is the network name)
 ///
-/// Initialize both local-autority and forward-authority add it to catalog
+/// Initialize both local-authority and forward-authority add it to catalog
 pub async fn run_local_dns(port: Option<u16>, domains: Vec<LowerName>) -> anyhow::Result<()> {
     let port = port.unwrap_or(53);
 
@@ -92,7 +90,7 @@ mod test {
     use super::*;
 
     #[tokio::test]
-    async fn test_run_local_dns_sever() {
+    async fn test_run_local_dns_server() {
         run_local_dns(Some(5300), vec![]).await.unwrap()
     }
 }

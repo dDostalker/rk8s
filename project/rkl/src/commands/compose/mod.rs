@@ -305,7 +305,7 @@ impl ComposeManager {
                 };
                 self.network_manager
                     .after_container_started(&srv_name, runner)
-                    .map_err(|e| anyhow!("netwrok setup failed: {e}"))?;
+                    .map_err(|e| anyhow!("network setup failed: {e}"))?;
             }
         }
         // return the compose application's state

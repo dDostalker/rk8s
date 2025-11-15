@@ -1,16 +1,13 @@
 use std::collections::HashMap;
 use std::fs;
-use std::thread;
-use std::time::Duration;
-// use std::thread;
-// use std::fs::OpenOptions;
 use std::io::Write;
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::path::Path;
 use std::path::PathBuf;
-// use std::process::id;
 use std::str::FromStr;
+use std::thread;
+use std::time::Duration;
 use sysinfo::Pid;
 use sysinfo::System;
 use tracing_appender::non_blocking;
@@ -385,7 +382,7 @@ impl NetworkManager {
         if let IpAddr::V4(ip) = container_ip {
             block_on(async move { self.add_dns_record(srv_name, ip).await })?;
         } else {
-            return Err(anyhow!("Unsupport ipv6 type"));
+            return Err(anyhow!("Unsupported ipv6 type"));
         }
 
         Ok(())
@@ -400,8 +397,11 @@ impl NetworkManager {
             ForkResult::Child => {
                 let child = getpid();
 
-                let mut file = fs::File::create(pid_file).unwrap();
-                writeln!(file, "{}", child).unwrap();
+                let mut file = fs::File::create(pid_file)
+                    .map_err(|e| anyhow!("failed to create rkl's dns pid file: {e}"))?;
+                writeln!(file, "{}", child).map_err(|e| {
+                    anyhow!("failed to write pid {child} to rkl's dns pid file: {e}")
+                })?;
 
                 setsid().expect("Failed to setsid");
                 let file_appender = tracing_appender::rolling::never(".", "child.log");
@@ -411,13 +411,14 @@ impl NetworkManager {
                     .with_writer(non_blocking)
                     .with_env_filter(EnvFilter::new("tracing"))
                     .init();
-                // let sub = create_local_subscriber("child.log");
-                // let _guard = tracing::subscriber::set_default(sub);
 
-                let rt = Runtime::new().unwrap();
+                let rt = Runtime::new()
+                    .map_err(|e| anyhow!("failed to init dns server's tokio runtime: {e}"))?;
                 rt.block_on(async {
-                    run_local_dns(Some(53), vec![]).await.unwrap();
-                });
+                    run_local_dns(Some(53), vec![])
+                        .await
+                        .map_err(|e| anyhow!("failed to run local dns server: {e}"))
+                })?;
                 std::process::exit(0);
             }
         };
