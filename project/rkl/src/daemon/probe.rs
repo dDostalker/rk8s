@@ -657,6 +657,7 @@ mod tests {
 
     use common::{ContainerSpec, ExecAction, HttpGetAction, ObjectMeta, PodSpec, PodStatus};
     use std::collections::HashMap;
+    use uuid::Uuid;
 
     async fn wait_for_state(
         mut rx: watch::Receiver<ProbeStatus>,
@@ -838,10 +839,14 @@ mod tests {
             kind: "Pod".to_string(),
             metadata: ObjectMeta {
                 name: "demo".to_string(),
-                uid: None,
+                uid: Uuid::nil(),
                 namespace: "default".to_string(),
                 labels,
                 annotations: HashMap::new(),
+                owner_references: None,
+                creation_timestamp: None,
+                deletion_timestamp: None,
+                finalizers: None,
             },
             spec: PodSpec {
                 node_name: None,
