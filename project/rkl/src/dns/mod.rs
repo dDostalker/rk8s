@@ -13,7 +13,6 @@ use hickory_server::store::forwarder::ForwardAuthority;
 use serde::{Deserialize, Serialize};
 use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
-use tracing::info;
 
 use crate::dns::authority::{LocalAuthority, MemStore};
 
