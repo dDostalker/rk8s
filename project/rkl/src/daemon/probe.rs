@@ -657,7 +657,6 @@ mod tests {
 
     use common::{ContainerSpec, ExecAction, HttpGetAction, ObjectMeta, PodSpec, PodStatus};
     use std::collections::HashMap;
-    use uuid::Uuid;
 
     async fn wait_for_state(
         mut rx: watch::Receiver<ProbeStatus>,

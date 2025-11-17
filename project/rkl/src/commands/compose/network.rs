@@ -34,6 +34,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
 use tokio::net::UnixStream;
 use tokio::runtime::Runtime;
+// use tracing_subscriber::prelude::*;
 
 use crate::commands::compose::spec::ComposeSpec;
 use crate::commands::compose::spec::NetworkSpec;
@@ -336,9 +337,7 @@ impl NetworkManager {
     }
 
     async fn add_dns_record(&self, srv_name: &str, ip: Ipv4Addr) -> Result<()> {
-        let mut stream = UnixStream::connect(DNS_SOCKET_PATH)
-            .await
-            .map_err(|e| anyhow!("Fatal error: failed to connect local DNS SOCKET: {e}"))?;
+        let mut stream = connect_dns_socket_with_retry(5, 200).await?;
 
         let domain = dns::parse_service_to_domain(srv_name, None);
 
@@ -398,22 +397,30 @@ impl NetworkManager {
                 let child = getpid();
 
                 let mut file = fs::File::create(pid_file)
-                    .map_err(|e| anyhow!("failed to create rkl's dns pid file: {e}"))?;
+                    .map_err(|e| anyhow!("failed to create rkl's dns pid file: {e}")).unwrap();
                 writeln!(file, "{}", child).map_err(|e| {
                     anyhow!("failed to write pid {child} to rkl's dns pid file: {e}")
-                })?;
+                }).unwrap();
 
                 setsid().expect("Failed to setsid");
-                let file_appender = tracing_appender::rolling::never(".", "child.log");
+
+
+                // Log file is now written to /var/log/rkl/child.log (see below).
+                let log_dir = "/var/log/rkl";
+                if let Err(e) = fs::create_dir_all(log_dir) {
+                    eprintln!("Failed to create log directory {log_dir}: {e}");
+                }
+                let file_appender = tracing_appender::rolling::never(log_dir, "child.log");
                 let (non_blocking, _guard) = non_blocking(file_appender);
 
-                tracing_subscriber::fmt()
+                let _ = tracing_subscriber::fmt()
                     .with_writer(non_blocking)
-                    .with_env_filter(EnvFilter::new("tracing"))
-                    .init();
+                    .with_env_filter(EnvFilter::new("info"))
+                    .try_init();
 
                 let rt = Runtime::new()
                     .map_err(|e| anyhow!("failed to init dns server's tokio runtime: {e}"))?;
+                println!("hahahahah");
                 rt.block_on(async {
                     run_local_dns(Some(53), vec![])
                         .await
@@ -468,4 +475,28 @@ where
     T: Send + 'static,
 {
     RUNTIME.spawn(f)
+}
+
+pub async fn connect_dns_socket_with_retry(retries: usize, delay_ms: u64) -> Result<UnixStream> {
+    for attempt in 1..=retries {
+        match UnixStream::connect(DNS_SOCKET_PATH).await {
+            Ok(stream) => return Ok(stream),
+            Err(e) => {
+                if attempt == retries {
+                    return Err(anyhow!(
+                        "Fatal error: failed to connect local DNS SOCKET after {} attempts: {e}",
+                        retries
+                    ));
+                } else {
+                    eprintln!(
+                        "Attempt {}/{} failed to connect DNS socket: {}. Retrying in {} ms...",
+                        attempt, retries, e, delay_ms
+                    );
+                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                }
+            }
+        }
+    }
+
+    unreachable!()
 }

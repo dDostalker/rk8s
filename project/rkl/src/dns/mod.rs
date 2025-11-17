@@ -49,6 +49,7 @@ pub fn parse_service_to_domain(srv_name: &str, domain: Option<&str>) -> String {
 ///
 /// Initialize both local-authority and forward-authority add it to catalog
 pub async fn run_local_dns(port: Option<u16>, domains: Vec<LowerName>) -> anyhow::Result<()> {
+    println!("_DNS server listening on ");
     let port = port.unwrap_or(53);
 
     let root_lowername = LowerName::from(Name::root());
@@ -79,7 +80,7 @@ pub async fn run_local_dns(port: Option<u16>, domains: Vec<LowerName>) -> anyhow
     let udp_socket = UdpSocket::bind(addr).await?;
     server.register_socket(udp_socket);
 
-    info!("DNS server listening on {addr}");
+    println!("DNS server listening on {addr}");
 
     server.block_until_done().await?;
     Ok(())
