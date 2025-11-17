@@ -839,14 +839,9 @@ mod tests {
             kind: "Pod".to_string(),
             metadata: ObjectMeta {
                 name: "demo".to_string(),
-                uid: Uuid::nil(),
                 namespace: "default".to_string(),
-                labels,
                 annotations: HashMap::new(),
-                owner_references: None,
-                creation_timestamp: None,
-                deletion_timestamp: None,
-                finalizers: None,
+                ..Default::default()
             },
             spec: PodSpec {
                 node_name: None,

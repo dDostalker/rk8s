@@ -13,8 +13,14 @@ mod quic;
 mod rootpath;
 mod task;
 
-use commands::{compose::ComposeCommand, container::ContainerCommand, pod::PodCommand};
-use commands::{compose::compose_execute, container::container_execute, pod::pod_execute};
+use commands::{
+    compose::ComposeCommand, container::ContainerCommand, pod::PodCommand,
+    replicaset::ReplicaSetCommand,
+};
+use commands::{
+    compose::compose_execute, container::container_execute, pod::pod_execute,
+    replicaset::replicaset_execute,
+};
 use tracing::error;
 
 use crate::commands::volume::{VolumeCommand, volume_execute};
@@ -38,6 +44,7 @@ impl Cli {
             Workload::Container(cmd) => container_execute(cmd),
             Workload::Compose(cmd) => compose_execute(cmd),
             Workload::Volume(cmd) => volume_execute(cmd),
+            Workload::Replicaset(cmd) => replicaset_execute(cmd),
         }
     }
 }
@@ -59,6 +66,8 @@ enum Workload {
 
     #[command(subcommand, about = "Manage the volume type", alias = "v")]
     Volume(VolumeCommand),
+    #[command(subcommand, about = "Manage ReplicaSets", alias = "rs")]
+    Replicaset(ReplicaSetCommand),
 }
 
 fn main() -> Result<(), anyhow::Error> {
