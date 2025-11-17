@@ -515,7 +515,7 @@ impl ContainerRunner {
         Ok(())
     }
 
-    // due to the compose manager reuse the container manager to uun container
+    // due to the compose manager reusing the container manager to run container
     // so we can determine the mode by find "compose" in the root_path
     pub fn determine_single_status(&self) -> bool {
         !self.root_path.parent().unwrap().ends_with("compose")
