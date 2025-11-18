@@ -17,7 +17,6 @@ use crate::commands::compose::spec::NetworkDriver::Bridge;
 use crate::commands::compose::spec::NetworkDriver::Host;
 use crate::commands::compose::spec::NetworkDriver::Overlay;
 use crate::dns;
-use crate::dns::run_local_dns;
 
 use cni_plugin::ip_range::IpRange;
 use hickory_proto::rr::LowerName;
@@ -389,46 +388,22 @@ impl NetworkManager {
 
     pub fn startup_dns_server(&self) -> Result<()> {
         let pid_file = "/var/run/rkl_dns.pid";
-        match unsafe { fork().expect("failed to fork dns server child process") } {
-            ForkResult::Parent { child } => {
-                println!("Forked DNS server in child PID: {}", child);
-            }
-            ForkResult::Child => {
-                let child = getpid();
+        let mut child_process = Command::new()
+    .arg("dns-server")  
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .spawn()
+    .map_err(|e| anyhow!("failed to spawn DNS server child process: {e}"))?;
 
-                let mut file = fs::File::create(pid_file)
-                    .map_err(|e| anyhow!("failed to create rkl's dns pid file: {e}")).unwrap();
-                writeln!(file, "{}", child).map_err(|e| {
-                    anyhow!("failed to write pid {child} to rkl's dns pid file: {e}")
-                }).unwrap();
+let child_pid = child_process.id();
+println!("Spawned DNS server in child PID: {}", child_pid);
 
-                setsid().expect("Failed to setsid");
-
-
-                // Log file is now written to /var/log/rkl/child.log (see below).
-                let log_dir = "/var/log/rkl";
-                if let Err(e) = fs::create_dir_all(log_dir) {
-                    eprintln!("Failed to create log directory {log_dir}: {e}");
-                }
-                let file_appender = tracing_appender::rolling::never(log_dir, "child.log");
-                let (non_blocking, _guard) = non_blocking(file_appender);
-
-                let _ = tracing_subscriber::fmt()
-                    .with_writer(non_blocking)
-                    .with_env_filter(EnvFilter::new("info"))
-                    .try_init();
-
-                let rt = Runtime::new()
-                    .map_err(|e| anyhow!("failed to init dns server's tokio runtime: {e}"))?;
-                println!("hahahahah");
-                rt.block_on(async {
-                    run_local_dns(Some(53), vec![])
-                        .await
-                        .map_err(|e| anyhow!("failed to run local dns server: {e}"))
-                })?;
-                std::process::exit(0);
-            }
-        };
+let mut file = fs::File::create(pid_file)
+    .map_err(|e| anyhow!("failed to create rkl's dns pid file: {e}"))?;
+writeln!(file, "{}", child_pid)
+    .map_err(|e| anyhow!("failed to write pid {child_pid} to rkl's dns pid file: {e}"))?;
+        
         Ok(())
     }
 

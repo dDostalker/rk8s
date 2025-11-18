@@ -11,7 +11,10 @@ use clap::Subcommand;
 use libcontainer::container::State;
 use liboci_cli::{Delete, List};
 use serde::{Deserialize, Serialize};
+use tokio::runtime::Runtime;
 use tracing::debug;
+
+use crate::dns::run_local_dns;
 
 use crate::{
     commands::{
@@ -74,6 +77,9 @@ pub enum ComposeCommand {
 
     #[command(about = "List all the containers' state in compose application")]
     Ps(PsArgs),
+
+    #[command(about = "Start up DNS Server", hide = true)]
+    Server,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -459,6 +465,18 @@ impl ComposeManager {
 
         Ok(())
     }
+
+    fn start_dns_server(&self) -> Result<()> {
+        let rt = Runtime::new()
+            .map_err(|e| anyhow!("failed to init dns server's tokio runtime: {e}"))?;
+        rt.block_on(async {
+            run_local_dns(Some(53), vec![])
+                .await
+                .map_err(|e| anyhow!("failed to run local dns server: {e}"))
+        })?;
+
+        Ok(())
+    }
 }
 
 pub fn parse_spec(path: PathBuf) -> Result<ComposeSpec> {
@@ -564,6 +582,7 @@ pub fn compose_execute(command: ComposeCommand) -> Result<()> {
             let name = ps_args.project_name.clone();
             (name, Box::new(move |manager| manager.ps(ps_args)))
         }
+        ComposeCommand::Server => (None, Box::new(move |manager| manager.start_dns_server())),
     };
 
     let mut manager = get_manager_from_name(project_name)?;
