@@ -106,9 +106,9 @@ fn get_actual_uid() -> Result<u32> {
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .spawn()
-        .map_err(|e| DbusError::BusctlError(format!("error in running busctl {e:?}")))?
+        .map_err(|e| DbusError::BusctlError(format!("error in running busctl {:?}", e)))?
         .wait_with_output()
-        .map_err(|e| DbusError::BusctlError(format!("error from busctl execution {e:?}")))?;
+        .map_err(|e| DbusError::BusctlError(format!("error from busctl execution {:?}", e)))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let found =
@@ -308,7 +308,7 @@ impl DbusConnection {
 
         // it is possible that while receiving messages, we get some extra/previous message
         // for method calls, we need to have an error or method return type message, so
-        // we keep looping until we get either of these. see https://github.com/containers/youki/issues/2826
+        // we keep looping until we get either of these. see https://github.com/youki-dev/youki/issues/2826
         // for more detailed analysis.
         loop {
             let reply = self.receive_complete_response()?;
@@ -500,7 +500,7 @@ mod tests {
     use nix::unistd::getuid;
 
     use super::super::utils::Result;
-    use super::{uid_to_hex_str, DbusConnection, SystemdClientError};
+    use super::{DbusConnection, SystemdClientError, uid_to_hex_str};
 
     #[test]
     fn test_uid_to_hex_str() {

@@ -18,6 +18,7 @@ use chrono::{DateTime, Local};
 use clap::Subcommand;
 use common::ContainerSpec;
 use json::JsonValue;
+use libcontainer::syscall::syscall::create_syscall;
 use libcontainer::{
     container::{Container, ContainerStatus, State, state},
     error::LibcontainerError,
@@ -129,7 +130,7 @@ impl ContainerRunner {
             container_id,
             root_path: match root_path {
                 Some(p) => p,
-                None => rootpath::determine(None)?,
+                None => rootpath::determine(None, &*create_syscall())?,
             },
             volumes: None,
             ip: None,
@@ -156,7 +157,7 @@ impl ContainerRunner {
         }
 
         let container_id = container_spec.name.clone();
-        let root_path = rootpath::determine(None)?;
+        let root_path = rootpath::determine(None, &*create_syscall())?;
         Ok(ContainerRunner {
             spec: container_spec,
             config_builder: builder.unwrap_or_default(),
@@ -185,7 +186,7 @@ impl ContainerRunner {
             container_id: container_id.to_string(),
             root_path: match root_path {
                 Some(path) => path,
-                None => rootpath::determine(None)?,
+                None => rootpath::determine(None, &*create_syscall())?,
             },
             volumes: None,
             ip: None,
@@ -437,6 +438,7 @@ impl ContainerRunner {
         .map_err(|e| anyhow::anyhow!("Failed to add CNI network: {}", e))
     }
 
+    #[allow(clippy::result_large_err)]
     pub fn load_container(&self) -> Result<Container, LibcontainerError> {
         Container::load(self.root_path.clone().join(&self.container_id))
     }
@@ -603,14 +605,14 @@ pub fn is_container_exist(id: &str, root_path: &PathBuf) -> Result<()> {
 
 /// command state
 pub fn state_container(id: &str) -> Result<()> {
-    let root_path = rootpath::determine(None)?;
+    let root_path = rootpath::determine(None, &*create_syscall())?;
     debug!("ROOT PATH: {}", root_path.to_str().unwrap_or_default());
     print_status(id.to_owned(), root_path)
 }
 
 /// command delete
 pub fn delete_container(id: &str) -> Result<()> {
-    let root_path = rootpath::determine(None)?;
+    let root_path = rootpath::determine(None, &*create_syscall())?;
     is_container_exist(id, &root_path)?;
     let delete_args = Delete {
         container_id: id.to_string(),
@@ -664,7 +666,7 @@ pub fn list_container(quiet: Option<bool>, format: Option<String>) -> Result<()>
             format: format.unwrap_or("default".to_owned()),
             quiet: quiet.unwrap_or(false),
         },
-        rootpath::determine(None)?,
+        rootpath::determine(None, &*create_syscall())?,
     )?;
     Ok(())
 }
@@ -676,7 +678,7 @@ pub fn exec_container(args: ExecContainer, root_path: Option<PathBuf>) -> Result
         args,
         match root_path {
             Some(path) => path,
-            None => rootpath::determine(None)?,
+            None => rootpath::determine(None, &*create_syscall())?,
         },
     )?;
     Ok(exit_code)

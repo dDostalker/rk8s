@@ -10,7 +10,7 @@ use std::str::FromStr;
 
 use caps::Capability;
 use nix::fcntl::OFlag;
-use nix::unistd::{pipe2, read, Pid};
+use nix::unistd::{Pid, pipe2, read};
 use oci_spec::runtime::{
     Capabilities as SpecCapabilities, Capability as SpecCapability, LinuxBuilder,
     LinuxCapabilities, LinuxCapabilitiesBuilder, LinuxNamespace, LinuxNamespaceBuilder,
@@ -18,13 +18,14 @@ use oci_spec::runtime::{
 };
 use procfs::process::Namespace;
 
-use super::builder::ContainerBuilder;
 use super::Container;
+use super::builder::ContainerBuilder;
 use crate::capabilities::CapabilityExt;
 use crate::container::builder_impl::ContainerBuilderImpl;
 use crate::error::{ErrInvalidSpec, LibcontainerError, MissingSpecError};
 use crate::notify_socket::NotifySocket;
 use crate::process::args::ContainerType;
+use crate::syscall::syscall::create_syscall;
 use crate::user_ns::UserNamespaceConfig;
 use crate::{tty, utils};
 
@@ -48,7 +49,7 @@ fn get_path_from_spec(spec: &Spec) -> Option<String> {
     env.iter()
         .find(|e| e.starts_with("PATH"))
         .iter()
-        .last()
+        .next_back()
         .map(|s| s.to_string())
 }
 
@@ -348,7 +349,12 @@ impl TenantContainerBuilder {
                 match iop_class_res {
                     Ok(iop_class) => {
                         if !(0..=7).contains(&priority) {
-                            tracing::error!(?priority, "io priority '{}' not between 0 and 7 (inclusive), class '{}' not in (IO_PRIO_CLASS_RT,IO_PRIO_CLASS_BE,IO_PRIO_CLASS_IDLE)",priority, iop_class);
+                            tracing::error!(
+                                ?priority,
+                                "io priority '{}' not between 0 and 7 (inclusive), class '{}' not in (IO_PRIO_CLASS_RT,IO_PRIO_CLASS_BE,IO_PRIO_CLASS_IDLE)",
+                                priority,
+                                iop_class
+                            );
                             Err(ErrInvalidSpec::IoPriority)?;
                         }
                     }
@@ -380,7 +386,10 @@ impl TenantContainerBuilder {
                         && (*policy != LinuxSchedulerPolicy::SchedFifo
                             && *policy != LinuxSchedulerPolicy::SchedRr)
                     {
-                        tracing::error!(?policy,"scheduler.priority can only be specified for SchedFIFO or SchedRR policy");
+                        tracing::error!(
+                            ?policy,
+                            "scheduler.priority can only be specified for SchedFIFO or SchedRR policy"
+                        );
                         Err(ErrInvalidSpec::Scheduler)?;
                     }
                 }
@@ -416,7 +425,10 @@ impl TenantContainerBuilder {
             }
         }
 
-        utils::validate_spec_for_new_user_ns(spec)?;
+        let syscall = create_syscall();
+        utils::validate_spec_for_new_user_ns(spec, &*syscall)?;
+        utils::validate_spec_for_net_devices(spec, &*syscall)
+            .map_err(LibcontainerError::NetDevicesError)?;
 
         Ok(())
     }
@@ -445,6 +457,12 @@ impl TenantContainerBuilder {
                 .env(self.get_environment(original_path_env));
             if let Some(cwd) = self.get_working_dir()? {
                 process_builder = process_builder.cwd(cwd);
+            }
+
+            if let Some(process) = spec.process() {
+                if let Some(cpu_affinity) = process.exec_cpu_affinity() {
+                    process_builder = process_builder.exec_cpu_affinity(cpu_affinity.clone());
+                }
             }
 
             if let Some(no_new_priv) = self.get_no_new_privileges() {
@@ -484,9 +502,14 @@ impl TenantContainerBuilder {
         let spec_linux = spec.linux().as_ref().unwrap();
         let mut linux_builder = LinuxBuilder::default().namespaces(ns);
 
-        if let Some(ref cgroup_path) = spec_linux.cgroups_path() {
+        if let Some(cgroup_path) = spec_linux.cgroups_path() {
             linux_builder = linux_builder.cgroups_path(cgroup_path.clone());
         }
+
+        if let Some(personality) = spec_linux.personality() {
+            linux_builder = linux_builder.personality(personality.clone());
+        }
+
         let linux = linux_builder.build()?;
         spec.set_process(Some(process)).set_linux(Some(linux));
 
@@ -623,7 +646,7 @@ mod test {
         Capabilities, Capability as SpecCap, LinuxCapabilities, ProcessBuilder, Spec, SpecBuilder,
     };
 
-    use super::{get_capabilities, LibcontainerError};
+    use super::{LibcontainerError, get_capabilities};
     use crate::capabilities::CapabilityExt;
 
     fn get_spec(caps: LinuxCapabilities) -> Spec {

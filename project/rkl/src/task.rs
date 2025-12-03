@@ -18,6 +18,7 @@ use libcontainer::oci_spec::runtime::{
     LinuxNamespaceBuilder, LinuxNamespaceType, LinuxResources, LinuxResourcesBuilder,
     ProcessBuilder, Spec,
 };
+use libcontainer::syscall::syscall::create_syscall;
 use liboci_cli::{Create, Delete, Kill, Start};
 use oci_spec::runtime::RootBuilder;
 use std::fs;
@@ -148,7 +149,7 @@ impl TaskRunner {
             container_id: sandbox_id.clone(),
         };
 
-        let root_path = rootpath::determine(None)
+        let root_path = rootpath::determine(None, &*create_syscall())
             .map_err(|e| anyhow!("Failed to determine root path: {}", e))?;
 
         create(create_args, root_path.clone(), false)
@@ -371,7 +372,7 @@ impl TaskRunner {
         };
 
         // get root_path
-        let root_path = rootpath::determine(None)
+        let root_path = rootpath::determine(None, &*create_syscall())
             .map_err(|e| anyhow!("Failed to determine root path: {}", e))?;
 
         create(create_args, root_path.clone(), false)
@@ -385,7 +386,7 @@ impl TaskRunner {
         request: StartContainerRequest,
     ) -> Result<StartContainerResponse, anyhow::Error> {
         let container_id = request.container_id;
-        let root_path = rootpath::determine(None)?;
+        let root_path = rootpath::determine(None, &*create_syscall())?;
 
         let start_args = Start {
             container_id: container_id.clone(),
@@ -402,7 +403,7 @@ impl TaskRunner {
         request: StopPodSandboxRequest,
     ) -> Result<StopPodSandboxResponse, anyhow::Error> {
         let pod_sandbox_id = request.pod_sandbox_id;
-        let root_path = rootpath::determine(None)?;
+        let root_path = rootpath::determine(None, &*create_syscall())?;
         let kill_args = Kill {
             container_id: pod_sandbox_id.clone(),
             signal: "SIGKILL".to_string(),
@@ -418,7 +419,7 @@ impl TaskRunner {
         request: RemovePodSandboxRequest,
     ) -> Result<RemovePodSandboxResponse, anyhow::Error> {
         let pod_sandbox_id = request.pod_sandbox_id;
-        let root_path = rootpath::determine(None)?;
+        let root_path = rootpath::determine(None, &*create_syscall())?;
         let delete_args = Delete {
             container_id: pod_sandbox_id.clone(),
             force: true,
@@ -476,7 +477,7 @@ impl TaskRunner {
                             container_id: container_id.clone(),
                             force: true,
                         };
-                        let root_path = rootpath::determine(None)?;
+                        let root_path = rootpath::determine(None, &*create_syscall())?;
                         if let Err(delete_err) = delete(delete_args, root_path.clone()) {
                             error!(
                                 "Failed to delete container {} during rollback: {}",
@@ -538,7 +539,7 @@ impl TaskRunner {
                             container_id: container_id.clone(),
                             force: true,
                         };
-                        let root_path = rootpath::determine(None)?;
+                        let root_path = rootpath::determine(None, &*create_syscall())?;
                         if let Err(delete_err) = delete(delete_args, root_path.clone()) {
                             error!(
                                 "Failed to delete container {} during rollback: {}",
