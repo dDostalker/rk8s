@@ -68,7 +68,10 @@ fn generate_unique_bundle_path() -> String {
 }
 
 /// pull image from rkb's implementation
-pub fn handle_oci_image(image_ref: impl AsRef<str>, _name: String) -> Result<(ImageConfiguration, String)> {
+pub fn handle_oci_image(
+    image_ref: impl AsRef<str>,
+    _name: String,
+) -> Result<(ImageConfiguration, String)> {
     let (manifest_path, layers) = rkb::pull::pull_or_get_image(image_ref, None::<&str>)
         .map_err(|e| anyhow!("failed to pull image: {e}"))?;
 

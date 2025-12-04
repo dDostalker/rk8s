@@ -4,9 +4,7 @@ use crate::{
         compose::network::{BRIDGE_CONF, CliNetworkConfig, STD_CONF_PATH},
         container::config::ContainerConfigBuilder,
         create, delete, exec, list, load_container, start,
-        utils::{
-            ImageType, determine_image, handle_oci_image, parse_key_val,
-        },
+        utils::{ImageType, determine_image, handle_oci_image, parse_key_val},
         volume::{VolumeManager, VolumePattern, string_to_pattern},
     },
     cri::cri_api::{ContainerConfig, CreateContainerResponse, Mount},
@@ -390,24 +388,7 @@ impl ContainerRunner {
         // Compose: self.volumes parameter is passed by the cli parameter, so when this container is from compose
         // self.volumes is None, this persist logic will not execute.
         // However, to persist the compose-project's volume usage, /run/youki/<compose>/<compose-project>/metadata.json will be used.
-        // TODO: wrapper this persist logic to one util function
-        if let Some(volumes_name) = &self.volumes {
-            let state_path = self.root_path.join(format!("{}/state.json", container_id));
-            if !state_path.exists() {
-                return Err(anyhow!(
-                    "[container {container_id} rootpath: {state_path:?}] There is no state.json in root_path after creating container"
-                ));
-            }
-            let mut state = load_container(self.root_path.clone(), &container_id)
-                .unwrap()
-                .state;
-            state.volumes = Some(volumes_name.clone());
-            let state_json = serde_json::to_string_pretty(&state).unwrap();
-
-            debug!("[container {container_id}] update state: {state_json}");
-
-            fs::write(state_path, state_json)?;
-        }
+        // TODO: wrapper this persist logic to one util function (Can not use container's origin state)
 
         Ok(CreateContainerResponse { container_id })
     }
@@ -748,9 +729,12 @@ pub fn setup_network_conf() -> Result<()> {
 // This function will return 2 args:
 // If using image ref, return (ConfigBuilder, BundlePath)
 // If This container is using local bundle path, return (None, "")
-pub fn handle_image_typ(container_spec: &ContainerSpec) -> Result<(Option<ContainerConfigBuilder>, String)> {
+pub fn handle_image_typ(
+    container_spec: &ContainerSpec,
+) -> Result<(Option<ContainerConfigBuilder>, String)> {
     if let ImageType::OCIImage = determine_image(&container_spec.image)? {
-        let (image_config, bundle_path) = handle_oci_image(&container_spec.image, container_spec.name.clone())?;
+        let (image_config, bundle_path) =
+            handle_oci_image(&container_spec.image, container_spec.name.clone())?;
         // handle image_config
         let mut builder = ContainerConfigBuilder::default();
         if let Some(config) = image_config.config() {
