@@ -60,10 +60,10 @@ impl OCISpecGenerator {
             // - Disable AppArmor/SELinux profiles.
             // - Allow access to all /dev devices.
             // give all the available capabilities
-            if let Some(p) = ctx.privileged {
-                if p {
-                    set_all_capabilities(&mut capabilities);
-                }
+            if let Some(p) = ctx.privileged
+                && p
+            {
+                set_all_capabilities(&mut capabilities);
             }
 
             if let Some(caps) = &ctx.capabilities {
