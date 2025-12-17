@@ -64,7 +64,9 @@ impl OCISpecGenerator {
                 if p {
                     set_all_capabilities(&mut capabilities);
                 }
-            } else if let Some(caps) = &ctx.capabilities {
+            }
+
+            if let Some(caps) = &ctx.capabilities {
                 caps.add.iter().for_each(|cap| {
                     add_cap(*cap, &mut capabilities);
                 });
