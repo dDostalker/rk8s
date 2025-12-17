@@ -54,7 +54,7 @@ impl OCISpecGenerator {
 
         // Handle the passed capabilities from users
         if let Some(ctx) = &self.container_spec.security_context {
-            // FIXME: Handle the priviledged Mode
+            // FIXME: Handle the privileged Mode
             // Note: Privileged mode typically requires additional configurations, such as:
             // - Disable Seccomp filters.
             // - Disable AppArmor/SELinux profiles.
