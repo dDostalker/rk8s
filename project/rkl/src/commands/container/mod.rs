@@ -10,6 +10,7 @@ use crate::{
 use anyhow::{Ok, Result, anyhow};
 use chrono::{DateTime, Local};
 use clap::Subcommand;
+use cni_plugin::macaddr::MacAddr;
 use common::ContainerSpec;
 use json::JsonValue;
 use libcontainer::syscall::syscall::create_syscall;
@@ -109,11 +110,15 @@ pub struct ContainerRunner {
     container_id: String,
     volumes: Option<Vec<String>>,
     ip: Option<IpAddr>,
+    mac: Option<MacAddr>,
 }
 
 impl ContainerRunner {
     pub fn ip(&self) -> Option<IpAddr> {
         self.ip
+    }
+    pub fn mac(&self) -> Option<MacAddr> {
+        self.mac
     }
     pub fn id(&self) -> String {
         self.container_id.clone()
@@ -140,6 +145,7 @@ impl ContainerRunner {
             },
             volumes: None,
             ip: None,
+            mac: None,
         })
     }
 
@@ -169,6 +175,7 @@ impl ContainerRunner {
             container_id,
             volumes,
             ip: None,
+            mac: None,
         })
     }
 
@@ -198,6 +205,7 @@ impl ContainerRunner {
             },
             volumes: None,
             ip: None,
+            mac: None,
         })
     }
 
@@ -502,6 +510,43 @@ impl ContainerRunner {
             }
         };
         Ok(())
+    }
+    pub fn retrieve_container_mac(&mut self, setup_result: JsonValue) -> Result<()> {
+        let interfaces = setup_result["interfaces"].clone();
+        if !interfaces.is_array() {
+            return Err(anyhow!("CNI result missing 'interfaces' array"));
+        }
+        for interface in interfaces.members() {
+            let sandbox = interface["sandbox"].as_str();
+            if let Some(sandbox) = sandbox {
+                if !sandbox.is_empty() {
+                    if let Some(mac) = interface["mac"].as_str() {
+                        self.mac = Some(mac.parse::<MacAddr>()?);
+                        debug!(
+                            "[container {}] Get container's MAC address: {}",
+                            self.container_id, mac
+                        );
+                        return Ok(());
+                    }
+                }
+            }
+        }
+
+        if let Some(last_interface) = interfaces.members().last() {
+            if let Some(mac) = last_interface["mac"].as_str() {
+                self.mac = Some(mac.parse::<MacAddr>()?);
+                debug!(
+                    "[container {}] Get container's MAC address (fallback): {}",
+                    self.container_id, mac
+                );
+                return Ok(());
+            }
+        }
+
+        Err(anyhow!(
+            "[container {}] CNI result missing valid MAC address",
+            self.container_id
+        ))
     }
 
     // due to the compose manager reusing the container manager to run container

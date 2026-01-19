@@ -1,13 +1,17 @@
+use ipnet::IpNet;
+use netavark::commands::setup::Setup;
+use netavark::network::types::Network;
+use netavark::network::types::NetworkOptions;
+use netavark::network::types::PerNetworkOptions;
+use netavark::network::types::Subnet;
 use std::collections::HashMap;
-use std::env;
+use std::ffi::OsString;
 use std::fs;
 use std::io::Write;
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::path::Path;
 use std::path::PathBuf;
-use std::process::Command;
-use std::process::Stdio;
 use std::str::FromStr;
 use std::thread;
 use std::time::Duration;
@@ -26,6 +30,7 @@ use ipnetwork::IpNetwork;
 use ipnetwork::Ipv4Network;
 use libipam::config::IPAMConfig;
 use libipam::range_set::RangeSet;
+use nix::unistd::Uid;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
@@ -45,6 +50,40 @@ pub const STD_CONF_PATH: &str = "/etc/cni/net.d";
 
 pub const BRIDGE_PLUGIN_NAME: &str = "libbridge";
 pub const BRIDGE_CONF: &str = "rkl-standalone-bridge.conf";
+
+fn default_netavark_config_dir(rootless: bool) -> OsString {
+    if let Some(v) = std::env::var_os("NETAVARK_CONFIG") {
+        return v;
+    }
+
+    if rootless {
+        let uid = Uid::effective().as_raw();
+        return OsString::from(format!("/run/user/{uid}/containers/networks"));
+    }
+
+    OsString::from("/run/containers/networks")
+}
+
+fn default_aardvark_bin() -> OsString {
+    // Allow overrides (useful in dev environments)
+    if let Some(v) = std::env::var_os("AARDVARK_DNS_BIN") {
+        return v;
+    }
+    if let Some(v) = std::env::var_os("AARDVARK_BIN") {
+        return v;
+    }
+
+    // Common locations on many distros (Podman)
+    let candidates = ["/usr/libexec/podman/aardvark-dns", "/usr/bin/aardvark-dns"];
+    for c in candidates {
+        if Path::new(c).exists() {
+            return OsString::from(c);
+        }
+    }
+
+    // Fall back to the most common default; netavark will disable DNS if missing.
+    OsString::from("/usr/libexec/podman/aardvark-dns")
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -246,14 +285,9 @@ impl NetworkManager {
             // there is no definition of networks
             self.is_default = true
         }
-
         self.validate(spec)?;
-
         // allocate the bridge interface
         self.allocate_interface()?;
-
-        self.startup_dns_server()?;
-
         Ok(())
     }
 
@@ -352,7 +386,7 @@ impl NetworkManager {
         let mut buf = String::new();
         let mut reader = BufReader::new(&mut stream);
         reader.read_line(&mut buf).await?;
-        let buf = buf.trim(); // get rid of the "\n" in  "ok\n" 
+        let buf = buf.trim(); // get rid of the "\n" in  "ok\n"
 
         if buf != "ok" {
             return Err(anyhow!(
@@ -369,62 +403,123 @@ impl NetworkManager {
     ///
     pub(crate) fn after_container_started(
         &self,
+
         srv_name: &str,
         runner: ContainerRunner,
     ) -> Result<()> {
         let container_ip = runner
             .ip()
             .ok_or_else(|| anyhow!("[container {}]Empty IP address", runner.id()))?;
-        if let IpAddr::V4(ip) = container_ip {
-            block_on(async move { self.add_dns_record(srv_name, ip).await })?;
+        // let container_mac = runner
+        //     .mac()
+        //     .ok_or_else(|| anyhow!("[container {}]Empty MAC address", runner.id()))?;
+        if let IpAddr::V4(_ip) = container_ip {
+            let alias = vec![runner.id()];
+            let mut networks = HashMap::new();
+            let mut network_info = HashMap::new();
+            for (network_name, _) in self.map.clone() {
+                let network_se = match self.network_service.get(&network_name) {
+                    Some(network) => network,
+                    None => continue,
+                };
+                for (_container, container_spec) in network_se {
+                    let Some(container_name) = container_spec.container_name.as_ref() else {
+                        continue;
+                    };
+                    if *container_name == runner.id() {
+                        let network_opts = PerNetworkOptions {
+                            aliases: Some(alias.clone()),
+                            interface_name: self
+                                .network_interface
+                                .get(&network_name)
+                                .unwrap_or(&"vethcni0".to_string())
+                                .clone(),
+                            static_ips: Some(vec![container_ip]),
+                            static_mac: None,
+                            options: None,
+                        };
+                        let network = Network {
+                            dns_enabled: true,
+                            driver: "bridge".to_string(),
+                            id: "".to_string(), // 目前位置
+                            internal: true,
+                            ipv6_enabled: false,
+                            name: network_name.clone(),
+                            network_interface: None,
+                            options: None,
+                            ipam_options: None,
+                            subnets: Some(vec![Subnet {
+                                gateway: Some(IpAddr::V4(Ipv4Addr::new(172, 17, 0, 1))),
+                                lease_range: None,
+                                subnet: IpNet::new(IpAddr::V4(Ipv4Addr::new(172, 17, 0, 0)), 16)
+                                    .unwrap(),
+                            }]),
+                            routes: None,
+                            network_dns_servers: Some(vec![]),
+                        };
+
+                        networks.insert(network_name.clone(), network_opts);
+                        network_info.insert(network_name, network);
+                        break;
+                    }
+                }
+            }
+            let opts = NetworkOptions {
+                container_id: runner.id(),
+                container_name: runner.id(),
+                container_hostname: None,
+                networks,
+                network_info,
+                port_mappings: None,
+                dns_servers: None,
+            };
+
+            // IMPORTANT: netavark `Setup::new()` expects a *network namespace file path* (e.g. `/proc/<pid>/ns/net`),
+            // not a directory. Passing a directory will cause `setns()` to fail with EINVAL.
+            let pid = runner
+                .get_container_state()?
+                .pid
+                .ok_or_else(|| anyhow!("[container {}] PID not found", runner.id()))?;
+            let netns_path = format!("/proc/{pid}/ns/net");
+            if !Path::new(&netns_path).exists() {
+                return Err(anyhow!(
+                    "[container {}] netns path not found: {netns_path}",
+                    runner.id()
+                ));
+            }
+            let setup = Setup::new(netns_path);
+
+            // Write netavark input JSON into a temp file.
+            let mut json_path = std::env::temp_dir();
+            json_path.push("rkl-netavark");
+            json_path.push(format!("{}.network.json", runner.id()));
+            if let Some(parent) = json_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let json_str = serde_json::to_string(&opts)?;
+            let mut json_file = std::fs::File::create(&json_path)?;
+            json_file.write_all(json_str.as_bytes())?;
+
+            let rootless = !Uid::effective().is_root();
+            let config_dir = default_netavark_config_dir(rootless);
+            fs::create_dir_all(PathBuf::from(&config_dir))?;
+
+            setup.exec(
+                Some(json_path.into_os_string()),
+                Some(config_dir),
+                None,
+                default_aardvark_bin(),
+                None,
+                rootless,
+            )
+            .map_err(|e| anyhow!("[container {}] netavark setup failed: {e}", runner.id()))?;
         } else {
             return Err(anyhow!("Unsupported ipv6 type"));
         }
 
         Ok(())
     }
-
-    pub fn startup_dns_server(&self) -> Result<()> {
-        // TODO: Due to current test method(Directly run test_runner ./target/debug/deps/... )
-        // We CAN NOT USE #[cfg(test)] to distinct test or product environment
-        // So here introduce RKL_TEST_MODE env TEMPORARILY.
-
-        let is_test_mode = env::var("RKL_TEST_MODE").is_ok();
-        let current_exe: PathBuf;
-
-        if is_test_mode {
-            current_exe = env::current_dir()
-                .map_err(|e| anyhow!("failed to get current executable path: {e}"))?
-                .join("target/debug/rkl");
-            println!("{current_exe:?}");
-        } else {
-            // ========== PRODUCTION LOGIC (#[cfg(not(test)])) ==========
-            current_exe = env::current_exe()
-                .map_err(|e| anyhow!("failed to get current executable path: {e}"))?;
-        }
-
-        let child_process = Command::new(&current_exe) // Use the path to the current executable
-            .arg("compose") // First argument: 'compose'
-            .arg("server") // Second argument: 'server'
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|e| anyhow!("failed to spawn DNS server child process: {e}"))?;
-
-        // thread::sleep(time::Duration::from_secs(1000));
-
-        let child_pid = child_process.id();
-        println!("Spawned DNS server in child PID: {}", child_pid);
-
-        let mut file = fs::File::create(PID_FILE_PATH)
-            .map_err(|e| anyhow!("failed to create rkl's dns pid file: {e}"))?;
-        writeln!(file, "{}", child_pid)
-            .map_err(|e| anyhow!("failed to write pid {child_pid} to rkl's dns pid file: {e}"))?;
-
-        Ok(())
-    }
-
+    // 明天写调试，以及修复尽可能正常运行
     pub fn clean_up() -> Result<()> {
         let pid_file = PID_FILE_PATH;
         if Path::new(pid_file).exists() {

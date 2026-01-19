@@ -51,7 +51,7 @@ pub fn parse_service_to_domain(srv_name: &str, domain: Option<&str>) -> String {
 /// Initialize both local-authority and forward-authority add it to catalog
 pub async fn run_local_dns(port: Option<u16>, domains: Vec<LowerName>) -> anyhow::Result<()> {
     let port = port.unwrap_or(53);
-
+    dbg!(&domains);
     let root_lowername = LowerName::from(Name::root());
     let mem_store = Arc::new(Mutex::new(MemStore::new()));
     let local_authority = LocalAuthority::start(&Name::root().to_string(), mem_store).await?;
