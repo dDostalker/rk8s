@@ -2,7 +2,6 @@ use std::{
     collections::{HashMap, VecDeque},
     env::{self},
     fs::{self, File},
-    net::{IpAddr, Ipv4Addr},
     path::{Path, PathBuf},
     vec,
 };
@@ -12,13 +11,12 @@ use clap::Subcommand;
 use libcontainer::container::State;
 use libcontainer::syscall::syscall::create_syscall;
 use liboci_cli::{Delete, List};
-use netavark::network::types::{NetworkOptions, PerNetworkOptions};
 
 use serde::{Deserialize, Serialize};
 use tokio::runtime::Runtime;
 use tracing::debug;
 
-use libruntime::dns::{LOCAL_NAMESERVER, run_local_dns};
+use libruntime::dns::run_local_dns;
 
 use crate::commands::{
     compose::{
@@ -133,10 +131,22 @@ impl ComposeManager {
 
     fn clean_up(&self) -> Result<()> {
         // delete container
+        eprint!("run");
         for container in &self.containers {
+            dbg!(&container);
+
             remove_container(&self.root_path, container)?;
+            let pid = container.pid.expect("container no pid");
+            let id = container.id.clone();
+            let netns_path = format!("/proc/{pid}/ns/net");
+            if !Path::new(&netns_path).exists() {
+                return Err(anyhow!(
+                    "[container {}] netns path not found: {netns_path}",
+                    id
+                ));
+            }
+            self.teardown_network(netns_path, id)?;
         }
-        self.clean_up_network()?;
 
         fs::remove_dir_all(&self.root_path)
             .map_err(|e| anyhow!("failed to delete the whole project: {}", e))
@@ -149,260 +159,6 @@ impl ComposeManager {
     }
 
     fn up(&mut self, args: UpArgs) -> Result<()> {
-        /*
-         *
-         * 来源问题，如何知道创建了什么网络，第二个问题ns的问题
-         *
-         1 │services:
-         2 │  web:
-         3 │    image: nginx
-         4 │    networks:
-         5 │      - app-network
-         6 │  db:
-         7 │    image: postgres
-         8 │    networks:
-         9 │      - app-network
-        10 │
-        11 │networks:
-        12 │  app-network:
-        13 │    driver: bridge
-        `networks` 和 `network_info` 的作用
-
-
-         一、`networks`（容器级别的网络选项）
-
-         作用：描述容器在每个网络上的配置选项。
-         包含内容：
-         • interface_name：容器内的接口名（如 eth0）
-         • static_ips：静态 IP 地址（如果指定）
-         • aliases：DNS 别名列表
-         • static_mac：静态 MAC 地址（如果指定）
-         • options：驱动特定的选项
-
-         特点：
-         • 容器级别：每个容器在每个网络上可能有不同的配置
-         • 动态：可以在运行时修改（如添加别名）
-
-
-         二、`network_info`（网络级别的配置信息）
-
-         作用：描述网络本身的定义和配置。
-         包含内容：
-         • name：网络名称
-         • id：网络 ID
-         • driver：网络驱动（如 bridge）
-         • subnets：子网配置（包含网关）
-         • dns_enabled：是否启用 DNS
-         • network_dns_servers：网络级别的 DNS 服务器
-         • internal：是否为内部网络
-         • ipv6_enabled：是否启用 IPv6
-
-         特点：
-         • 网络级别：同一网络的所有容器共享相同的网络配置
-         • 静态：网络配置在创建网络时确定，通常不会改变
-
-
-         Podman 如何获取它们
-
-
-         一、获取 `networks`（容器级别的选项）
-
-         流程：
-
-         1. 从容器状态数据库读取
-
-         代码位置：podman/libpod/networking_linux.go:38-48
-
-            1 │// 1. 获取容器连接的网络
-            2 │networks, err := ctr.networks()  // ← 从这里获取
-            3 │if err != nil {
-            4 │    return nil, err
-            5 │}
-            6 │
-            7 │// 2. 构建 NetworkOptions
-            8 │netOpts := ctr.getNetworkOptions(networks)  // ← 使用 networks
-
-
-         2. `ctr.networks()` 的实现
-
-         代码位置：podman/libpod/container.go:1471-1473
-
-            1 │func (c *Container) networks() (map[string]types.PerNetworkOptions, error) {
-            2 │    return c.runtime.state.GetNetworks(c)  // ← 从状态数据库获取
-            3 │}
-
-
-         3. 从 SQLite 数据库读取
-
-         代码位置：podman/libpod/sqlite_state.go:908-931
-
-            1 │func (s *SQLiteState) GetNetworks(ctr *Container) (map[string]types.PerNetworkOptions, error) {
-            2 │    // 从容器配置中读取
-            3 │    cfg, err := s.getCtrConfig(ctr.ID())
-            4 │    if err != nil {
-            5 │        return nil, err
-            6 │    }
-            7 │
-            8 │    return cfg.Networks, nil  // ← 返回容器在每个网络上的选项
-            9 │    // cfg.Networks 的结构：
-           10 │    // map[string]PerNetworkOptions {
-           11 │    //   "app-network": {
-           12 │    //     InterfaceName: "eth0",
-           13 │    //     Aliases: ["web"],
-           14 │    //     StaticIPs: nil,
-           15 │    //     ...
-           16 │    //   }
-           17 │    // }
-           18 │}
-
-
-         4. 数据来源
-
-         • 容器创建时：从 c.config.Networks 获取（用户指定或默认）
-         • 容器运行时：从状态数据库读取（可能已被修改）
-
-         代码位置：podman/libpod/runtime_ctr.go:260-306
-
-            1 │// 容器创建时，处理网络配置
-            2 │if len(ctr.config.Networks) > 0 {
-            3 │    for nameOrID, opts := range ctr.config.Networks {
-            4 │        // 规范化网络名称
-            5 │        netName, nicName, err := r.normalizeNetworkName(nameOrID)
-            6 │
-            7 │        // 设置接口名（如果未指定）
-            8 │        if opts.InterfaceName == "" {
-            9 │            opts.InterfaceName = nicName  // 或自动分配 eth0, eth1...
-           10 │        }
-           11 │
-           12 │        // 自动添加 DNS 别名
-           13 │        opts.Aliases = append(opts.Aliases, getExtraNetworkAliases(ctr)...)
-           14 │        // getExtraNetworkAliases 添加：
-           15 │        // - 容器 ID 前 12 位
-           16 │        // - 容器主机名（如果设置了）
-           17 │
-           18 │        normalizeNetworks[netName] = opts
-           19 │    }
-           20 │    ctr.config.Networks = normalizeNetworks
-           21 │    // 然后保存到状态数据库
-           22 │}
-
-
-         二、获取 `network_info`（网络级别的配置）
-
-         流程：
-
-         1. Netavark 加载网络配置
-
-         代码位置：podman/vendor/go.podman.io/common/libnetwork/netavark/run.go:164-183
-
-            1 │func (n *netavarkNetwork) convertNetOpts(opts types.NetworkOptions) (*netavarkOptions, bool, error) {
-            2 │    netavarkOptions := netavarkOptions{
-            3 │        NetworkOptions: opts,  // 包含 networks（容器级别）
-            4 │        Networks:       make(map[string]*types.Network, len(opts.Networks)),
-            5 │    }
-            6 │
-            7 │    // 为每个网络加载网络配置
-            8 │    for network := range opts.Networks {
-            9 │        net, err := n.getNetwork(network)  // ← 从配置文件加载
-           10 │        if err != nil {
-           11 │            return nil, false, err
-           12 │        }
-           13 │        netavarkOptions.Networks[network] = net  // ← 添加到 network_info
-           14 │    }
-           15 │    return &netavarkOptions, needsPlugin, nil
-           16 │}
-
-
-         2. `getNetwork()` 从内存映射查找
-
-         代码位置：podman/vendor/go.podman.io/common/libnetwork/netavark/network.go:317-341
-
-            1 │func (n *netavarkNetwork) getNetwork(nameOrID string) (*types.Network, error) {
-            2 │    // 从内存中的 networks 映射查找
-            3 │    if val, ok := n.networks[nameOrID]; ok {
-            4 │        return val, nil  // ← 返回网络配置
-            5 │    }
-            6 │
-            7 │    // 如果没找到，尝试通过 ID 查找
-            8 │    for _, val := range n.networks {
-            9 │        if strings.HasPrefix(val.ID, nameOrID) {
-           10 │            return val, nil
-           11 │        }
-           12 │    }
-           13 │
-           14 │    return nil, fmt.Errorf("unable to find network")
-           15 │}
-
-
-         3. `loadNetworks()` 从文件系统加载
-
-         代码位置：podman/vendor/go.podman.io/common/libnetwork/netavark/network.go:182-261
-
-            1 │func (n *netavarkNetwork) loadNetworks() error {
-            2 │    // 网络配置目录
-            3 │    // 默认：/etc/containers/networks
-            4 │    // 或：/run/containers/networks（运行时）
-            5 │
-            6 │    files, err := os.ReadDir(n.networkConfigDir)
-            7 │    // 读取所有 .json 文件
-            8 │
-            9 │    networks := make(map[string]*types.Network, len(files))
-           10 │    for _, f := range files {
-           11 │        if filepath.Ext(f.Name()) != ".json" {
-           12 │            continue
-           13 │        }
-           14 │
-           15 │        // 读取网络配置文件
-           16 │        path := filepath.Join(n.networkConfigDir, f.Name())
-           17 │        // 例如：/etc/containers/networks/app-network.json
-           18 │
-           19 │        file, err := os.Open(path)
-           20 │        network := new(types.Network)
-           21 │        err = json.NewDecoder(file).Decode(network)  // ← 解析 JSON
-           22 │
-           23 │        // 验证网络名称
-           24 │        if network.Name+".json" != f.Name() {
-           25 │            continue
-           26 │        }
-           27 │
-           28 │        // 添加到内存映射
-           29 │        networks[network.Name] = network
-           30 │    }
-           31 │
-           32 │    n.networks = networks  // ← 保存到内存
-           33 │    return nil
-           34 │}
-
-
-         4. 网络配置文件的位置和格式
-
-         配置文件位置：
-         • 默认：/etc/containers/networks/{network-name}.json
-         • 运行时：/run/containers/networks/{network-name}.json
-
-         配置文件示例：/etc/containers/networks/app-network.json
-
-            1 │{
-            2 │  "name": "app-network",
-            3 │  "id": "app-network-id-123...",
-            4 │  "driver": "bridge",
-            5 │  "network_interface": "app-network",
-            6 │  "subnets": [{
-            7 │    "subnet": "10.88.0.0/24",
-            8 │    "gateway": "10.88.0.1"
-            9 │  }],
-           10 │  "ipv6_enabled": false,
-           11 │  "internal": false,
-           12 │  "dns_enabled": true,
-           13 │  "network_dns_servers": [],
-           14 │  "ipam_options": {
-           15 │    "driver": "host-local"
-           16 │  }
-           17 │}
-
-
-         完整数据流
-         */
         let compose_yaml = args.compose_yaml;
         // check the project_id exists?
         if self.root_path.exists() {
@@ -417,7 +173,6 @@ impl ComposeManager {
         self.handle_depends_on(&spec)?;
 
         // top-field manager handle those field
-        /// 明天把ips信息和获取以和创建初始ns优先完成，现在的netavark没法通过库来传递
         let _ = &mut self.network_manager.handle(&spec)?;
 
         self.handle_volumes(&spec)?;
@@ -437,12 +192,6 @@ impl ComposeManager {
         Ok(())
     }
 
-    // persist the compose application's status to a json file
-    ///{
-    /// "project_name": "",
-    /// "containers": [ {} {},],
-    /// "volumes":[]
-    ///}
     fn persist_compose_state(&self) -> Result<()> {
         let metadata = ComposeMetadata {
             containers: self.containers.clone(),
@@ -574,7 +323,7 @@ impl ComposeManager {
                     }
                 };
                 self.network_manager
-                    .after_container_started(&srv_name, runner)
+                    .after_container_started(runner)
                     .map_err(|e| anyhow!("network setup failed: {e}"))?;
             }
         }
@@ -670,8 +419,8 @@ impl ComposeManager {
     }
 
     /// TODO: clean the bridge that is generated by compose up
-    fn clean_up_network(&self) -> Result<()> {
-        NetworkManager::clean_up()?;
+    fn teardown_network(&self, network_name_space: String, id: String) -> Result<()> {
+        NetworkManager::clean_up(network_name_space, id)?;
         Ok(())
     }
 

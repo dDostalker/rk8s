@@ -1,5 +1,6 @@
 use ipnet::IpNet;
 use netavark::commands::setup::Setup;
+use netavark::commands::teardown::Teardown;
 use netavark::network::types::Network;
 use netavark::network::types::NetworkOptions;
 use netavark::network::types::PerNetworkOptions;
@@ -12,37 +13,24 @@ use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::path::Path;
 use std::path::PathBuf;
-use std::str::FromStr;
-use std::thread;
-use std::time::Duration;
-use sysinfo::Pid;
-use sysinfo::System;
 
+use crate::commands::compose::config;
 use crate::commands::compose::spec::NetworkDriver::Bridge;
 use crate::commands::compose::spec::NetworkDriver::Host;
 use crate::commands::compose::spec::NetworkDriver::Overlay;
-use libruntime::dns;
-use libruntime::dns::PID_FILE_PATH;
+use crate::commands::compose::spec::NetworkSpec;
 
 use cni_plugin::ip_range::IpRange;
-use hickory_proto::rr::LowerName;
 use ipnetwork::IpNetwork;
 use ipnetwork::Ipv4Network;
 use libipam::config::IPAMConfig;
 use libipam::range_set::RangeSet;
-use nix::unistd::Uid;
-use tokio::io::AsyncBufReadExt;
-use tokio::io::AsyncWriteExt;
-use tokio::io::BufReader;
-use tokio::net::UnixStream;
 
 use crate::commands::compose::spec::ComposeSpec;
-use crate::commands::compose::spec::NetworkSpec;
 use crate::commands::compose::spec::ServiceSpec;
 use crate::commands::container::ContainerRunner;
 use anyhow::Result;
 use anyhow::anyhow;
-use libruntime::dns::DNS_SOCKET_PATH;
 use serde::{Deserialize, Serialize};
 
 pub const CNI_VERSION: &str = "1.0.0";
@@ -51,21 +39,15 @@ pub const STD_CONF_PATH: &str = "/etc/cni/net.d";
 pub const BRIDGE_PLUGIN_NAME: &str = "libbridge";
 pub const BRIDGE_CONF: &str = "rkl-standalone-bridge.conf";
 
-fn default_netavark_config_dir(rootless: bool) -> OsString {
+fn default_netavark_config_dir() -> OsString {
     if let Some(v) = std::env::var_os("NETAVARK_CONFIG") {
         return v;
     }
 
-    if rootless {
-        let uid = Uid::effective().as_raw();
-        return OsString::from(format!("/run/user/{uid}/containers/networks"));
-    }
-
     OsString::from("/run/containers/networks")
 }
-
+// defaulet location
 fn default_aardvark_bin() -> OsString {
-    // Allow overrides (useful in dev environments)
     if let Some(v) = std::env::var_os("AARDVARK_DNS_BIN") {
         return v;
     }
@@ -73,7 +55,6 @@ fn default_aardvark_bin() -> OsString {
         return v;
     }
 
-    // Common locations on many distros (Podman)
     let candidates = ["/usr/libexec/podman/aardvark-dns", "/usr/bin/aardvark-dns"];
     for c in candidates {
         if Path::new(c).exists() {
@@ -81,7 +62,6 @@ fn default_aardvark_bin() -> OsString {
         }
     }
 
-    // Fall back to the most common default; netavark will disable DNS if missing.
     OsString::from("/usr/libexec/podman/aardvark-dns")
 }
 
@@ -367,52 +347,15 @@ impl NetworkManager {
         Ok(())
     }
 
-    async fn add_dns_record(&self, srv_name: &str, ip: Ipv4Addr) -> Result<()> {
-        let mut stream = connect_dns_socket_with_retry(5, 200).await?;
-
-        let domain = dns::parse_service_to_domain(srv_name, None);
-
-        let msg = dns::DNSUpdateMessage {
-            action: dns::UpdateAction::Add,
-            name: LowerName::from_str(&domain).unwrap(),
-            ip,
-        };
-
-        let msg_byte = serde_json::to_vec(&msg).unwrap();
-
-        stream.write_all(&msg_byte).await?;
-        stream.write_all(b"\n").await?;
-
-        let mut buf = String::new();
-        let mut reader = BufReader::new(&mut stream);
-        reader.read_line(&mut buf).await?;
-        let buf = buf.trim(); // get rid of the "\n" in  "ok\n"
-
-        if buf != "ok" {
-            return Err(anyhow!(
-                "fail to add {srv_name}'s dns record, got DNS Server response: {buf}"
-            ));
-        }
-        Ok(())
-    }
-
     /// This function act as a hook func, doese network-related stuff after container started
     /// Currently, it will do the following things:
     ///
     /// 1. Put the Container's IP to Local daemon dns server(use sock)
     ///
-    pub(crate) fn after_container_started(
-        &self,
-
-        srv_name: &str,
-        runner: ContainerRunner,
-    ) -> Result<()> {
+    pub(crate) fn after_container_started(&self, runner: ContainerRunner) -> Result<()> {
         let container_ip = runner
             .ip()
             .ok_or_else(|| anyhow!("[container {}]Empty IP address", runner.id()))?;
-        // let container_mac = runner
-        //     .mac()
-        //     .ok_or_else(|| anyhow!("[container {}]Empty MAC address", runner.id()))?;
         if let IpAddr::V4(_ip) = container_ip {
             let alias = vec![runner.id()];
             let mut networks = HashMap::new();
@@ -438,14 +381,20 @@ impl NetworkManager {
                             static_mac: None,
                             options: None,
                         };
+                        let network_interface = Some(
+                            self.network_interface
+                                .get(&network_name)
+                                .unwrap_or(&"vethcni0".to_string())
+                                .clone(),
+                        );
                         let network = Network {
                             dns_enabled: true,
                             driver: "bridge".to_string(),
-                            id: "".to_string(), // 目前位置
+                            id: "".to_string(),
                             internal: true,
                             ipv6_enabled: false,
                             name: network_name.clone(),
-                            network_interface: None,
+                            network_interface,
                             options: None,
                             ipam_options: None,
                             subnets: Some(vec![Subnet {
@@ -488,8 +437,7 @@ impl NetworkManager {
                 ));
             }
             let setup = Setup::new(netns_path);
-
-            // Write netavark input JSON into a temp file.
+            //  to del when fork the netavark and rewrite
             let mut json_path = std::env::temp_dir();
             json_path.push("rkl-netavark");
             json_path.push(format!("{}.network.json", runner.id()));
@@ -499,44 +447,48 @@ impl NetworkManager {
             let json_str = serde_json::to_string(&opts)?;
             let mut json_file = std::fs::File::create(&json_path)?;
             json_file.write_all(json_str.as_bytes())?;
+            //
 
-            let rootless = !Uid::effective().is_root();
-            let config_dir = default_netavark_config_dir(rootless);
+            let config_dir = default_netavark_config_dir();
             fs::create_dir_all(PathBuf::from(&config_dir))?;
-
-            setup.exec(
-                Some(json_path.into_os_string()),
-                Some(config_dir),
-                None,
-                default_aardvark_bin(),
-                None,
-                rootless,
-            )
-            .map_err(|e| anyhow!("[container {}] netavark setup failed: {e}", runner.id()))?;
+            #[cfg(debug_assertions)]
+            dbg!(&opts);
+            setup
+                .exec(
+                    Some(json_path.into_os_string()),
+                    Some(config_dir),
+                    None,
+                    OsString::from("/home/ddostalker/桌面/aardvark-dns"), //default_aardvark_bin(),
+                    None,
+                    false,
+                )
+                .map_err(|e| anyhow!("[container {}] netavark setup failed: {e}", runner.id()))?;
         } else {
             return Err(anyhow!("Unsupported ipv6 type"));
         }
 
         Ok(())
     }
-    // 明天写调试，以及修复尽可能正常运行
-    pub fn clean_up() -> Result<()> {
-        let pid_file = PID_FILE_PATH;
-        if Path::new(pid_file).exists() {
-            if let Ok(pid_str) = fs::read_to_string(pid_file)
-                && let Ok(pid) = pid_str.trim().parse::<u32>()
-            {
-                let mut sys = System::new_all();
-                sys.refresh_processes();
-                if let Some(proc) = sys.process(Pid::from_u32(pid)) {
-                    println!("KILL PID: {}", pid);
-                    let _ = proc.kill();
-                    thread::sleep(Duration::from_secs(3));
-                }
-            }
-            let _ = fs::remove_file(pid_file);
+    pub fn clean_up(network_name_space: String, id: String) -> Result<()> {
+        let teardown = Teardown::new(network_name_space);
+        let config_dir = default_netavark_config_dir();
+        let mut json_path = std::env::temp_dir();
+        json_path.push("rkl-netavark");
+        json_path.push(format!("{}.network.json", id));
+        #[cfg(debug_assertions)]
+        {
+            dbg!(&json_path);
         }
-
+        teardown
+            .exec(
+                Some(json_path.into_os_string()),
+                Some(config_dir),
+                None,
+                OsString::from("/home/ddostalker/桌面/aardvark-dns"), //default_aardvark_bin(),
+                None,
+                false,
+            )
+            .map_err(|e| anyhow!("[container {}] netavark teardown failed: {e}", id))?;
         Ok(())
     }
 }
@@ -550,13 +502,6 @@ lazy_static! {
         .expect("Failed to create tokio runtime for network manager.");
 }
 
-fn block_on<F, T>(f: F) -> T
-where
-    F: Future<Output = T>,
-{
-    RUNTIME.block_on(f)
-}
-
 #[allow(unused)]
 fn spawn<F, T>(f: F) -> tokio::task::JoinHandle<T>
 where
@@ -564,28 +509,4 @@ where
     T: Send + 'static,
 {
     RUNTIME.spawn(f)
-}
-
-pub async fn connect_dns_socket_with_retry(retries: usize, delay_ms: u64) -> Result<UnixStream> {
-    for attempt in 1..=retries {
-        match UnixStream::connect(DNS_SOCKET_PATH).await {
-            Ok(stream) => return Ok(stream),
-            Err(e) => {
-                if attempt == retries {
-                    return Err(anyhow!(
-                        "Fatal error: failed to connect local DNS SOCKET after {} attempts: {e}",
-                        retries
-                    ));
-                } else {
-                    eprintln!(
-                        "Attempt {}/{} failed to connect DNS socket: {}. Retrying in {} ms...",
-                        attempt, retries, e, delay_ms
-                    );
-                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
-                }
-            }
-        }
-    }
-
-    unreachable!()
 }

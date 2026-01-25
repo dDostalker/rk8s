@@ -18,7 +18,6 @@ use crate::dns::authority::{LocalAuthority, MemStore};
 
 pub const LOCAL_AUTHORITY_DOMAIN: &str = "rkl.internal.";
 pub const LOCAL_NAMESERVER: &str = "172.17.0.1";
-pub const PID_FILE_PATH: &str = "/var/run/rkl_dns.pid";
 pub const DNS_SOCKET_PATH: &str = "/var/run/rkl_dns.sock";
 
 #[derive(Debug, Deserialize, Serialize)]
