@@ -21,7 +21,7 @@ use libruntime::dns::run_local_dns;
 use crate::commands::{
     compose::{
         config::ConfigManager,
-        network::NetworkManager,
+        network::{NetworkManager, add_resolv_conf, create_resolv_conf},
         spec::{ComposeSpec, ServiceSpec},
     },
     container::{ContainerRunner, remove_container},
@@ -132,6 +132,8 @@ impl ComposeManager {
     fn clean_up(&self) -> Result<()> {
         // delete container
         eprint!("run");
+        dbg!(&self.containers);
+        //迁移的时候需要逐个设置
         for container in &self.containers {
             dbg!(&container);
 
@@ -294,7 +296,8 @@ impl ComposeManager {
 
                 runner.add_mounts(mounts);
                 runner.add_mounts(configs_mounts);
-
+                create_resolv_conf()?;
+                add_resolv_conf(&mut runner);
                 match runner.run() {
                     std::result::Result::Ok(_) => {
                         self.containers.push(runner.get_container_state()?);

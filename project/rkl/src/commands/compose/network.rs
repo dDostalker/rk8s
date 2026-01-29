@@ -1,4 +1,5 @@
 use ipnet::IpNet;
+use libruntime::cri::cri_api::Mount;
 use netavark::commands::setup::Setup;
 use netavark::commands::teardown::Teardown;
 use netavark::network::types::Network;
@@ -8,13 +9,13 @@ use netavark::network::types::Subnet;
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs;
+use std::fs::File;
 use std::io::Write;
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::path::Path;
 use std::path::PathBuf;
 
-use crate::commands::compose::config;
 use crate::commands::compose::spec::NetworkDriver::Bridge;
 use crate::commands::compose::spec::NetworkDriver::Host;
 use crate::commands::compose::spec::NetworkDriver::Overlay;
@@ -390,8 +391,8 @@ impl NetworkManager {
                         let network = Network {
                             dns_enabled: true,
                             driver: "bridge".to_string(),
-                            id: "".to_string(),
-                            internal: true,
+                            id: network_name.clone(),
+                            internal: false,
                             ipv6_enabled: false,
                             name: network_name.clone(),
                             network_interface,
@@ -491,6 +492,38 @@ impl NetworkManager {
             .map_err(|e| anyhow!("[container {}] netavark teardown failed: {e}", id))?;
         Ok(())
     }
+}
+// in the future , add dns server
+/// create resolv.conf file
+/// save base resolv.conf file
+pub fn create_resolv_conf() -> Result<()> {
+    let contect = "search rkl.internal\nnameserver 172.17.0.1\n";
+    let mut resolv_path = std::env::temp_dir();
+    resolv_path.push("rkl-netavark");
+    resolv_path.push("resolv.conf");
+    if let Some(parent) = resolv_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut file = File::create(resolv_path)?;
+    file.write_all(contect.as_bytes())?;
+    Ok(())
+}
+
+// add resolv.conf to container
+// todo !
+pub fn add_resolv_conf(runner: &mut ContainerRunner) {
+    let mut host_path = std::env::temp_dir();
+    host_path.push("rkl-netavark");
+    host_path.push("resolv.conf");
+    let host_path = host_path.into_os_string().into_string().unwrap();
+    let container_path = format!("/etc/resolv.conf");
+
+    runner.add_mounts(vec![Mount {
+        host_path,
+        container_path,
+        readonly: true,
+        ..Default::default()
+    }]);
 }
 
 use lazy_static::lazy_static;
