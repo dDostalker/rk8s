@@ -1,22 +1,23 @@
 [workspace]
 members = [
-    "distribution", 
-    "libbridge", 
+    "distribution",
+    "libbridge",
     "libcni",
     "libnetwork",
-    "libfuse-fs", 
-    "rfuse3", 
-    "libipam", 
+    "libfuse-fs",
+    "rfuse3",
+    "libipam",
     "rkb",
     "rkl",
     "rks",
     "libruntime",
-    "libscheduler", 
+    "libscheduler",
     "common",
     "slayerfs",
     "libvault",
     "dagrs-derive",
-    "dagrs"
+    "dagrs",
+    "aardvark-dns"
 ]
 
 default-members = ["distribution", "rkl", "libbridge", "libipam", "rkb", "libnetwork", "rks"]
